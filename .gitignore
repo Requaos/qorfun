@@ -1,0 +1,21 @@
+# builds
+*.exe
+*.txt
+bin/*
+
+# configs
+settings.toml
+
+# IDEs
+.idea/*
+.vscode
+
+# goreporter
+stok-proj-*.html
+
+# static-analysis
+static-analysis.txt
+
+# Include the entire vendor directory.
+# This needs to go near the end as it negates earlier patterns
+!/vendor/**
