@@ -2,10 +2,15 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
+
 	"github.com/qor/admin"
-	"net/http"
+	"github.com/qor/qor"
+
+	"github.com/requaos/qorfun/internal/config"
 )
 
 // Define a GORM-backend model
@@ -22,12 +27,16 @@ type Product struct {
 }
 
 func main() {
+	// configure db access
+	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		config.DBHost(), config.DBPort(), config.DBUsername(), config.DBPassword(), config.DBName())
+
 	// Set up the database
-	DB, _ := gorm.Open("postgres", "demo.db")
+	DB, _ := gorm.Open("postgres", psqlInfo)
 	DB.AutoMigrate(&User{}, &Product{})
 
-	// Initalize
-	Admin := admin.New(&admin.AdminConfig{DB: DB})
+	// Initialize
+	Admin := admin.New(&qor.Config{DB: DB})
 
 	// Create resources from GORM-backend model
 	Admin.AddResource(&User{})
