@@ -35,17 +35,19 @@ func main() {
 	DB, _ := gorm.Open("postgres", psqlInfo)
 	DB.AutoMigrate(&User{}, &Product{})
 
-	// Initialize
+	// Initalize
 	Admin := admin.New(&qor.Config{DB: DB})
+
+	// Site Name
+	Admin.SetSiteName("QOR DEMO")
 
 	// Create resources from GORM-backend model
 	Admin.AddResource(&User{})
 	Admin.AddResource(&Product{})
 
-	// Initalize an HTTP request multiplexer
+	// Register route
 	mux := http.NewServeMux()
-
-	// Mount admin to the mux
+	// amount to /admin, so visit `/admin` to view the admin interface
 	Admin.MountTo("/admin", mux)
 
 	fmt.Println("Listening on: 9000")

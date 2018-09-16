@@ -26,9 +26,7 @@ COPY --from=builder /etc/passwd /etc/passwd
 # copy binary
 COPY --from=builder /go/src/github.com/requaos/qorfun/bin/linux_amd64/qorfun /qorfun
 
-# copy settings
-COPY --from=builder /go/src/github.com/requaos/qorfun/settings.toml /settings.toml
-
+# set the executing user
 USER fun
 
 # run binary

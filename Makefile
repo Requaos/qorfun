@@ -1,4 +1,4 @@
-.PHONY: all build generate binary test image release setup report
+.PHONY: all build get generate binary test image release setup report
 
 REGISTRY_REPO = "requaos/qorfun"
 
@@ -37,9 +37,9 @@ BUILDER_GOOS_GOARCH="$(GOOS)_$(GOARCH)"
 
 # check for windows
 ifeq ($(GOOS),windows)
-    BINARY_NAME := qorfun.exe
+	BINARY_NAME := qorfun.exe
 else
-    BINARY_NAME := qorfun
+	BINARY_NAME := qorfun
 endif
 
 # EXTLDFLAGS = -extldflags "-lm -lstdc++ -static"
@@ -52,9 +52,13 @@ GO_LINKER_FLAGS ?= --ldflags \
 
 all: build
 
-build: generate binary
+build: get generate binary
 
-generate:
+get:
+	@echo "$(OK_COLOR)*** Running go get... ***"
+	$(GO) get -u ./...
+
+generate: get
 	@echo "$(OK_COLOR)*** Running go generate... ***$(NO_COLOR)"
 	$(GO) generate $(GOFLAGS) ./...
 
@@ -85,7 +89,7 @@ setup:
 	@$(GO) get -u $(GOFLAGS) github.com/kisielk/errcheck
 
 report:
-	@cd .. && goreporter -p ./qorfun -e ./qorfun/vendor -r ./qorfun && cd qorfun
+	@cd .. && goreporter -p ./qorfun -r ./qorfun && cd qorfun
 	@echo "$(OK_COLOR)*** Running megacheck... ***$(NO_COLOR)"
 	@megacheck bitbucket.org/knowbe4/phisher-ingester/... > static-analysis.txt || :
 	@echo "$(OK_COLOR)*** Running goconst... ***$(NO_COLOR)"
