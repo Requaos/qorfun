@@ -55,8 +55,8 @@ func getSettings() *viper.Viper {
 
 	v.SetDefault(dbHost, "localhost")
 	v.SetDefault(dbPort, "5432")
-	v.SetDefault(dbName, "app_name")
-	v.SetDefault(dbUsername, "app_name")
+	v.SetDefault(dbName, "qorfun")
+	v.SetDefault(dbUsername, "qorfun")
 	v.SetDefault(dbPassword, "")
 
 	v.AutomaticEnv()
