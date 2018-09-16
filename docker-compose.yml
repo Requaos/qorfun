@@ -1,0 +1,25 @@
+version: "3"
+services:
+  db:
+    image: "postgres:10.4"
+    volumes:
+    - db:/var/lib/postgresql/data
+    environment:
+    - POSTGRES_USER=qorfun
+    expose:
+    - "5432"
+
+  fun:
+    image: qorfun
+    build:
+      context: .
+    command: ["/qorfun"]
+    depends_on:
+    - db
+    links:
+    - db
+    ports:
+    - "9000:9000"
+
+volumes:
+  db: {}
