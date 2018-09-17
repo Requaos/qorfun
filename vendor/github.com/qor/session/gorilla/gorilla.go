@@ -8,7 +8,6 @@ import (
 
 	gorillaContext "github.com/gorilla/context"
 	"github.com/gorilla/sessions"
-
 	"github.com/qor/qor/utils"
 	"github.com/qor/session"
 )

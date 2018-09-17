@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/disintegration/imaging"
-
 	"github.com/qor/qor/utils"
 )
 

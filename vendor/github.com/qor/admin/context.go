@@ -2,46 +2,132 @@ package admin
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
-	"os"
-	"path"
 	"path/filepath"
 
 	"github.com/qor/qor"
 	"github.com/qor/qor/utils"
+	"github.com/qor/roles"
+	"github.com/qor/session"
 )
 
 // Context admin context, which is used for admin controller
 type Context struct {
 	*qor.Context
 	*Searcher
-	Flashes  []Flash
-	Resource *Resource
-	Admin    *Admin
-	Content  template.HTML
-	Action   string
-	Result   interface{}
+	Resource     *Resource
+	Admin        *Admin
+	Content      template.HTML
+	Action       string
+	Settings     map[string]interface{}
+	RouteHandler *routeHandler
+	Result       interface{}
+
+	funcMaps template.FuncMap
 }
 
 // NewContext new admin context
 func (admin *Admin) NewContext(w http.ResponseWriter, r *http.Request) *Context {
-	return &Context{Context: &qor.Context{Config: admin.Config, Request: r, Writer: w}, Admin: admin}
+	return &Context{Context: &qor.Context{Config: &qor.Config{DB: admin.DB}, Request: r, Writer: w}, Admin: admin, Settings: map[string]interface{}{}}
+}
+
+// Funcs register FuncMap for templates
+func (context *Context) Funcs(funcMaps template.FuncMap) *Context {
+	if context.funcMaps == nil {
+		context.funcMaps = template.FuncMap{}
+	}
+
+	for key, value := range funcMaps {
+		context.funcMaps[key] = value
+	}
+	return context
+}
+
+// Flash set flash message
+func (context *Context) Flash(message string, typ string) {
+	context.Admin.SessionManager.Flash(context.Writer, context.Request, session.Message{
+		Message: template.HTML(message),
+		Type:    typ,
+	})
+}
+
+// Get get context's Settings
+func (context *Context) Get(key string) interface{} {
+	return context.Settings[key]
+}
+
+// Set set context's Settings
+func (context *Context) Set(key string, value interface{}) {
+	context.Settings[key] = value
+}
+
+// Asset access template based on current context
+func (context *Context) Asset(layouts ...string) ([]byte, error) {
+	var prefixes, themes []string
+
+	if context.Request != nil {
+		if theme := context.Request.URL.Query().Get("theme"); theme != "" {
+			themes = append(themes, theme)
+		}
+	}
+
+	if len(themes) == 0 && context.Resource != nil {
+		for _, theme := range context.Resource.Config.Themes {
+			themes = append(themes, theme.GetName())
+		}
+	}
+
+	if resourcePath := context.resourcePath(); resourcePath != "" {
+		for _, theme := range themes {
+			prefixes = append(prefixes, filepath.Join("themes", theme, resourcePath))
+		}
+		prefixes = append(prefixes, resourcePath)
+	}
+
+	for _, theme := range themes {
+		prefixes = append(prefixes, filepath.Join("themes", theme))
+	}
+
+	for _, layout := range layouts {
+		for _, prefix := range prefixes {
+			if content, err := context.Admin.AssetFS.Asset(filepath.Join(prefix, layout)); err == nil {
+				return content, nil
+			}
+		}
+
+		if content, err := context.Admin.AssetFS.Asset(layout); err == nil {
+			return content, nil
+		}
+	}
+
+	return []byte(""), fmt.Errorf("template not found: %v", layouts)
+}
+
+// GetSearchableResources get defined searchable resources has performance
+func (context *Context) GetSearchableResources() (resources []*Resource) {
+	if admin := context.Admin; admin != nil {
+		for _, res := range admin.searchResources {
+			if res.HasPermission(roles.Read, context.Context) {
+				resources = append(resources, res)
+			}
+		}
+	}
+	return
 }
 
 func (context *Context) clone() *Context {
 	return &Context{
 		Context:  context.Context,
 		Searcher: context.Searcher,
-		Flashes:  context.Flashes,
 		Resource: context.Resource,
 		Admin:    context.Admin,
 		Result:   context.Result,
 		Content:  context.Content,
+		Settings: context.Settings,
 		Action:   context.Action,
+		funcMaps: context.funcMaps,
 	}
 }
 
@@ -61,101 +147,58 @@ func (context *Context) setResource(res *Resource) *Context {
 	return context
 }
 
-// Template
-func (context *Context) getViewPaths() (paths []string) {
-	var dirs = []string{context.resourcePath(), path.Join("themes", "default"), "."}
-	var themes []string
-
-	if context.Request != nil {
-		if theme := context.Request.URL.Query().Get("theme"); theme != "" {
-			themePath := path.Join("themes", theme)
-			themes = append(themes, []string{path.Join(themePath, context.resourcePath()), themePath}...)
-		}
-	}
-
-	if context.Resource != nil {
-		for _, theme := range context.Resource.Config.Themes {
-			themePath := path.Join("themes", theme)
-			themes = append(themes, []string{path.Join(themePath, context.resourcePath()), themePath}...)
-		}
-	}
-
-	for _, p := range append(themes, dirs...) {
-		for _, d := range viewPaths {
-			if context.Action != "" {
-				if isExistingDir(path.Join(d, p, context.Action)) {
-					paths = append(paths, path.Join(d, p, context.Action))
-				}
-			}
-
-			if isExistingDir(path.Join(d, p)) {
-				paths = append(paths, path.Join(d, p))
-			}
-		}
-	}
-	return paths
-}
-
-func (context *Context) findFile(layout string) (string, error) {
-	for _, p := range context.getViewPaths() {
-		if _, err := os.Stat(path.Join(p, layout)); !os.IsNotExist(err) {
-			return path.Join(p, layout), nil
-		}
-	}
-	return "", errors.New("file not found")
-}
-
-// FindTemplate find template based on context
-func (context *Context) FindTemplate(layouts ...string) (string, error) {
-	for _, layout := range layouts {
-		for _, p := range context.getViewPaths() {
-			if _, err := os.Stat(filepath.Join(p, layout)); !os.IsNotExist(err) {
-				return filepath.Join(p, layout), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("template not found: %v", layouts)
-}
-
-// Render render template based on context
-func (context *Context) Render(name string, results ...interface{}) template.HTML {
+// renderText render text based on data
+func (context *Context) renderText(text string, data interface{}) template.HTML {
 	var (
-		err  error
-		file = name
+		err    error
+		tmpl   *template.Template
+		result = bytes.NewBufferString("")
 	)
 
-	defer func() {
-		if r := recover(); r != nil {
-			err = errors.New(fmt.Sprintf("Get error when render file %v: %v", file, r))
-			utils.ExitWithMsg(err)
-		}
-	}()
-
-	if file, err = context.FindTemplate(name + ".tmpl"); err == nil {
-		var clone = context.clone()
-		var result = bytes.NewBufferString("")
-
-		if len(results) > 0 {
-			clone.Result = results[0]
-		}
-
-		var tmpl *template.Template
-		if tmpl, err = template.New(filepath.Base(file)).Funcs(clone.FuncMap()).ParseFiles(file); err == nil {
-			if err = tmpl.Execute(result, clone); err == nil {
-				return template.HTML(result.String())
-			}
+	if tmpl, err = template.New("").Funcs(context.FuncMap()).Parse(text); err == nil {
+		if err = tmpl.Execute(result, data); err == nil {
+			return template.HTML(result.String())
 		}
 	}
 
 	return template.HTML(err.Error())
 }
 
+// renderWith render template based on data
+func (context *Context) renderWith(name string, data interface{}) template.HTML {
+	var (
+		err     error
+		content []byte
+	)
+
+	if content, err = context.Asset(name + ".tmpl"); err == nil {
+		return context.renderText(string(content), data)
+	}
+	return template.HTML(err.Error())
+}
+
+// Render render template based on context
+func (context *Context) Render(name string, results ...interface{}) template.HTML {
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("Get error when render file %v: %v", name, r)
+			utils.ExitWithMsg(err)
+		}
+	}()
+
+	clone := context.clone()
+	if len(results) > 0 {
+		clone.Result = results[0]
+	}
+
+	return clone.renderWith(name, clone)
+}
+
 // Execute execute template with layout
 func (context *Context) Execute(name string, result interface{}) {
 	var tmpl *template.Template
-	var cacheKey string
 
-	if name == "show" && !context.Resource.isSetShowAttrs {
+	if name == "show" && !context.Resource.sections.ConfiguredShowAttrs {
 		name = "edit"
 	}
 
@@ -163,30 +206,20 @@ func (context *Context) Execute(name string, result interface{}) {
 		context.Action = name
 	}
 
-	if context.Resource != nil {
-		cacheKey = path.Join(context.resourcePath(), name)
-	} else {
-		cacheKey = name
-	}
-
-	if t, ok := templates[cacheKey]; !ok || true {
-		if file, err := context.FindTemplate("layout.tmpl"); err == nil {
-			if tmpl, err = template.New(filepath.Base(file)).Funcs(context.FuncMap()).ParseFiles(file); err == nil {
-				for _, name := range []string{"header", "footer"} {
-					if tmpl.Lookup(name) == nil {
-						if file, err := context.FindTemplate(name + ".tmpl"); err == nil {
-							tmpl.ParseFiles(file)
-						}
-					} else {
-						utils.ExitWithMsg(err)
+	if content, err := context.Asset("layout.tmpl"); err == nil {
+		if tmpl, err = template.New("layout").Funcs(context.FuncMap()).Parse(string(content)); err == nil {
+			for _, name := range []string{"header", "footer"} {
+				if tmpl.Lookup(name) == nil {
+					if content, err := context.Asset(name + ".tmpl"); err == nil {
+						tmpl.Parse(string(content))
 					}
+				} else {
+					utils.ExitWithMsg(err)
 				}
-			} else {
-				utils.ExitWithMsg(err)
 			}
+		} else {
+			utils.ExitWithMsg(err)
 		}
-	} else {
-		tmpl = t
 	}
 
 	context.Result = result
@@ -198,11 +231,22 @@ func (context *Context) Execute(name string, result interface{}) {
 
 // JSON generate json outputs for action
 func (context *Context) JSON(action string, result interface{}) {
-	if action == "show" && !context.Resource.isSetShowAttrs {
+	if context.Encode(action, result) == nil {
+		context.Writer.Header().Set("Content-Type", "application/json")
+	}
+}
+
+// Encode encode result for an action
+func (context *Context) Encode(action string, result interface{}) error {
+	if action == "show" && !context.Resource.sections.ConfiguredShowAttrs {
 		action = "edit"
 	}
 
-	js, _ := json.MarshalIndent(context.Resource.convertObjectToJSONMap(context, result, action), "", "\t")
-	context.Writer.Header().Set("Content-Type", "application/json")
-	context.Writer.Write(js)
+	encoder := Encoder{
+		Action:   action,
+		Resource: context.Resource,
+		Context:  context,
+		Result:   result,
+	}
+	return context.Admin.Transformer.Encode(context.Writer, encoder)
 }

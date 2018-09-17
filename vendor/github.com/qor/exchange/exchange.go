@@ -1,10 +1,10 @@
 package exchange
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 
+	"github.com/jinzhu/gorm"
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"
 	"github.com/qor/roles"
@@ -13,9 +13,9 @@ import (
 
 // Resource defined an exchange resource, which includes importing/exporting fields definitions
 type Resource struct {
-	resource.Resource
+	*resource.Resource
 	Config *Config
-	metas  []*Meta
+	Metas  []*Meta
 }
 
 // Config is exchange resource config
@@ -25,12 +25,13 @@ type Config struct {
 	// Permission defined permission
 	Permission *roles.Permission
 	// WithoutHeader no header in the data file
-	WithoutHeader bool
+	WithoutHeader      bool
+	DisableTransaction bool
 }
 
 // NewResource new exchange Resource
 func NewResource(value interface{}, config ...Config) *Resource {
-	res := Resource{Resource: *resource.New(value)}
+	res := Resource{Resource: resource.New(value)}
 	if len(config) > 0 {
 		res.Config = &config[0]
 	} else {
@@ -39,12 +40,8 @@ func NewResource(value interface{}, config ...Config) *Resource {
 	res.Permission = res.Config.Permission
 
 	if res.Config.PrimaryField != "" {
-		res.FindOneHandler = func(result interface{}, metaValues *resource.MetaValues, context *qor.Context) error {
-			scope := context.GetDB().NewScope(res.Value)
-			if field, ok := scope.FieldByName(res.Config.PrimaryField); ok {
-				return context.GetDB().First(result, fmt.Sprintf("%v = ?", scope.Quote(field.DBName)), metaValues.Get(res.Config.PrimaryField).Value).Error
-			}
-			return errors.New("failed to find primary field")
+		if err := res.SetPrimaryFields(res.Config.PrimaryField); err != nil {
+			fmt.Println(err)
 		}
 	}
 	return &res
@@ -52,16 +49,20 @@ func NewResource(value interface{}, config ...Config) *Resource {
 
 // Meta define exporting/importing meta for exchange Resource
 func (res *Resource) Meta(meta *Meta) *Meta {
+	if meta.Header == "" {
+		meta.Header = meta.Name
+	}
+
 	meta.base = res
 	meta.updateMeta()
-	res.metas = append(res.metas, meta)
+	res.Metas = append(res.Metas, meta)
 	return meta
 }
 
 // GetMeta get defined Meta from exchange Resource
 func (res *Resource) GetMeta(name string) *Meta {
-	for _, meta := range res.metas {
-		if meta.Name == name {
+	for _, meta := range res.Metas {
+		if meta.Header == name {
 			return meta
 		}
 	}
@@ -71,7 +72,7 @@ func (res *Resource) GetMeta(name string) *Meta {
 // GetMetas get all defined Metas from exchange Resource
 func (res *Resource) GetMetas([]string) []resource.Metaor {
 	metas := []resource.Metaor{}
-	for _, meta := range res.metas {
+	for _, meta := range res.Metas {
 		metas = append(metas, meta)
 	}
 	return metas
@@ -90,7 +91,7 @@ func (res *Resource) Import(container Container, context *qor.Context, callbacks
 		var current uint
 		var total = rows.Total()
 
-		if db := context.GetDB(); db != nil {
+		if db := context.GetDB(); db != nil && !res.Config.DisableTransaction {
 			tx := db.Begin()
 			context.SetDB(tx)
 			defer func() {
@@ -119,6 +120,7 @@ func (res *Resource) Import(container Container, context *qor.Context, callbacks
 
 				handleError = func(err error) {
 					hasError = true
+					progress.Errors.AddError(err)
 
 					if errors, ok := err.(errorsInterface); ok {
 						for _, err := range errors.GetErrors() {
@@ -148,10 +150,12 @@ func (res *Resource) Import(container Container, context *qor.Context, callbacks
 				result := res.NewStruct()
 				progress.Value = result
 
-				res.FindOneHandler(result, metaValues, context)
-
-				if err = resource.DecodeToResource(res, result, metaValues, context).Start(); err == nil {
-					if err = res.CallSave(result, context); err != nil {
+				if err = res.FindOneHandler(result, metaValues, context); err == nil || err == gorm.ErrRecordNotFound {
+					if err = resource.DecodeToResource(res, result, metaValues, context).Start(); err == nil {
+						if err = res.CallSave(result, context); err != nil {
+							handleError(err)
+						}
+					} else {
 						handleError(err)
 					}
 				} else {
@@ -172,13 +176,18 @@ func (res *Resource) Import(container Container, context *qor.Context, callbacks
 // Export used export data from a exchange Resource
 //     product.Export(csv.New("products.csv"), context)
 func (res *Resource) Export(container Container, context *qor.Context, callbacks ...func(Progress) error) error {
-	results := res.NewSlice()
+	var (
+		total   uint
+		results = res.NewSlice()
+		err     = context.GetDB().Find(results).Count(&total).Error
+	)
 
-	var total uint
-	if err := context.GetDB().Find(results).Count(&total).Error; err == nil {
+	if err == nil {
 		reflectValue := reflect.Indirect(reflect.ValueOf(results))
 
-		if writer, err := container.NewWriter(res, context); err == nil {
+		writer, err := container.NewWriter(res, context)
+
+		if err == nil {
 			writer.WriteHeader()
 
 			for i := 0; i < reflectValue.Len(); i++ {
@@ -207,12 +216,11 @@ func (res *Resource) Export(container Container, context *qor.Context, callbacks
 					}
 				}
 			}
-			writer.Flush()
-		} else {
-			return err
+			err = writer.Flush()
 		}
-	} else {
+
 		return err
 	}
-	return nil
+
+	return err
 }

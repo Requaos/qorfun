@@ -11,7 +11,6 @@ import (
 
 	mobiledetect "github.com/Shaked/gomobiledetect"
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/assetfs"
 	"github.com/qor/qor"

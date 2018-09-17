@@ -3,6 +3,9 @@ package l10n
 import (
 	"fmt"
 	"net/http"
+	"reflect"
+	"regexp"
+	"strings"
 
 	"github.com/qor/admin"
 	"github.com/qor/qor"
@@ -21,7 +24,7 @@ type l10nInterface interface {
 
 // Locale embed this struct into GROM-backend models to enable localization feature for your model
 type Locale struct {
-	LanguageCode string `sql:"size:6" gorm:"primary_key"`
+	LanguageCode string `sql:"size:20" gorm:"primary_key"`
 }
 
 // IsGlobal return if current locale is global
@@ -39,8 +42,8 @@ type LocaleCreatable struct {
 	Locale
 }
 
-// LocaleCreatable a method to allow your mod=el be creatable from locales
-func (LocaleCreatable) LocaleCreatable() {}
+// CreatableFromLocale a method to allow your mod=el be creatable from locales
+func (LocaleCreatable) CreatableFromLocale() {}
 
 type availableLocalesInterface interface {
 	AvailableLocales() []string
@@ -84,30 +87,36 @@ func getLocaleFromContext(context *qor.Context) string {
 	return Global
 }
 
+// LocalizeActionArgument localize action's argument
+type LocalizeActionArgument struct {
+	From string
+	To   []string
+}
+
 // ConfigureQorResource configure qor locale for Qor Admin
 func (l *Locale) ConfigureQorResource(res resource.Resourcer) {
 	if res, ok := res.(*admin.Resource); ok {
 		Admin := res.GetAdmin()
 		res.UseTheme("l10n")
 
-		if res.Config.Permission == nil {
-			res.Config.Permission = roles.NewPermission()
+		if res.Permission == nil {
+			res.Permission = roles.NewPermission()
 		}
-		res.Config.Permission.Allow(roles.CRUD, "locale_admin").Allow(roles.Read, "locale_reader")
+		res.Permission.Allow(roles.CRUD, "locale_admin").Allow(roles.Read, "locale_reader")
 
-		if res.GetMeta("Localization") == nil {
-			res.Meta(&admin.Meta{Name: "Localization", Type: "localization", Valuer: func(value interface{}, ctx *qor.Context) interface{} {
-				var languageCodes []string
-				var db = ctx.GetDB()
-				var scope = db.NewScope(value)
-				db.New().Set("l10n:mode", "unscoped").Model(res.Value).Where(fmt.Sprintf("%v = ?", scope.PrimaryKey()), scope.PrimaryKeyValue()).Pluck("language_code", &languageCodes)
-				return languageCodes
-			}})
+		res.Meta(&admin.Meta{Name: "Localization", Type: "localization", Valuer: func(value interface{}, ctx *qor.Context) interface{} {
+			var languageCodes []string
+			var db = ctx.GetDB()
+			var scope = db.NewScope(value)
+			db.New().Set("l10n:mode", "unscoped").Model(res.Value).Where(fmt.Sprintf("%v = ?", scope.PrimaryKey()), scope.PrimaryKeyValue()).Pluck("language_code", &languageCodes)
+			return utils.SliceUniq(languageCodes)
+		}})
 
-			attrs := res.ConvertSectionToStrings(res.IndexAttrs())
+		res.OverrideIndexAttrs(func() {
+			var attrs = res.ConvertSectionToStrings(res.IndexAttrs())
 			var hasLocalization bool
 			for _, attr := range attrs {
-				if attr == "Localization" {
+				if attr == "Localization" || attr == "-Localization" {
 					hasLocalization = true
 					break
 				}
@@ -118,13 +127,15 @@ func (l *Locale) ConfigureQorResource(res resource.Resourcer) {
 			} else {
 				res.IndexAttrs(res.IndexAttrs(), "-LanguageCode", "Localization")
 			}
-			res.NewAttrs(res.NewAttrs(), "-LanguageCode", "-Localization")
-			res.EditAttrs(res.EditAttrs(), "-LanguageCode", "-Localization")
-			res.ShowAttrs(res.ShowAttrs(), "-LanguageCode", "-Localization", false)
-		}
+		})
+		res.OverrideShowAttrs(func() {
+			res.ShowAttrs(res.ShowAttrs(), "-LanguageCode", "-Localization")
+		})
+		res.NewAttrs(res.NewAttrs(), "-LanguageCode", "-Localization")
+		res.EditAttrs(res.EditAttrs(), "-LanguageCode", "-Localization")
 
 		// Set meta permissions
-		for _, field := range Admin.Config.DB.NewScope(res.Value).Fields() {
+		for _, field := range Admin.DB.NewScope(res.Value).Fields() {
 			if isSyncField(field.StructField) {
 				if meta := res.GetMeta(field.Name); meta != nil {
 					permission := meta.Meta.Permission
@@ -135,14 +146,12 @@ func (l *Locale) ConfigureQorResource(res resource.Resourcer) {
 					}
 
 					meta.SetPermission(permission)
-				} else {
-					res.Meta(&admin.Meta{Name: field.Name, Permission: roles.Allow(roles.CRUD, "global_admin").Allow(roles.Read, "locale_reader")})
 				}
 			}
 		}
 
 		// Roles
-		role := res.Config.Permission.Role
+		role := res.Permission.Role
 		if _, ok := role.Get("global_admin"); !ok {
 			role.Register("global_admin", func(req *http.Request, currentUser interface{}) bool {
 				if getLocaleFromContext(&qor.Context{Request: req}) == Global {
@@ -181,7 +190,7 @@ func (l *Locale) ConfigureQorResource(res resource.Resourcer) {
 		}
 
 		// Inject for l10n
-		admin.RegisterViewPath("github.com/qor/l10n/views")
+		Admin.RegisterViewPath("github.com/qor/l10n/views")
 
 		// Middleware
 		Admin.GetRouter().Use(&admin.Middleware{
@@ -191,6 +200,46 @@ func (l *Locale) ConfigureQorResource(res resource.Resourcer) {
 				if mode := context.Request.URL.Query().Get("locale_mode"); mode != "" {
 					db = db.Set("l10n:mode", mode)
 				}
+
+				usingLanguageCodeAsPrimaryKey := false
+				if res := context.Resource; res != nil {
+					for idx, primaryField := range res.PrimaryFields {
+						if primaryField.Name == "LanguageCode" {
+							_, params := res.ToPrimaryQueryParams(res.GetPrimaryValue(context.Request), context.Context)
+							if len(params) > idx {
+								usingLanguageCodeAsPrimaryKey = true
+								db = db.Set("l10n:locale", params[idx])
+
+								// PUT usually used for localize
+								if context.Request.Method == "PUT" {
+									if _, ok := db.Get("l10n:localize_to"); !ok {
+										db = db.Set("l10n:localize_to", getLocaleFromContext(context.Context))
+									}
+								}
+								break
+							}
+						}
+					}
+				}
+
+				if !usingLanguageCodeAsPrimaryKey {
+					for key, values := range context.Request.URL.Query() {
+						if regexp.MustCompile(`primary_key\[.+_language_code\]`).MatchString(key) {
+							if len(values) > 0 {
+								db = db.Set("l10n:locale", values[0])
+
+								// PUT usually used for localize
+								if context.Request.Method == "PUT" || context.Request.Method == "POST" {
+									db = db.Set(key, "")
+									if _, ok := db.Get("l10n:localize_to"); !ok {
+										db = db.Set("l10n:localize_to", getLocaleFromContext(context.Context))
+									}
+								}
+							}
+						}
+					}
+				}
+
 				if context.Request.URL.Query().Get("sorting") != "" {
 					db = db.Set("l10n:mode", "locale")
 				}
@@ -230,5 +279,69 @@ func (l *Locale) ConfigureQorResource(res resource.Resourcer) {
 			}
 			return []string{}
 		})
+
+		if res.GetAction("Localize") == nil {
+			argumentResource := Admin.NewResource(&LocalizeActionArgument{})
+			argumentResource.Meta(&admin.Meta{
+				Name: "From",
+				Type: "select_one",
+				Valuer: func(_ interface{}, context *qor.Context) interface{} {
+					return Global
+				},
+				Collection: func(value interface{}, context *qor.Context) (results [][]string) {
+					for _, locale := range getAvailableLocales(context.Request, context.CurrentUser) {
+						results = append(results, []string{locale, locale})
+					}
+					return
+				},
+			})
+			argumentResource.Meta(&admin.Meta{
+				Name: "To",
+				Type: "select_many",
+				Valuer: func(_ interface{}, context *qor.Context) interface{} {
+					return []string{getLocaleFromContext(context)}
+				},
+				Collection: func(value interface{}, context *qor.Context) (results [][]string) {
+					for _, locale := range getEditableLocales(context.Request, context.CurrentUser) {
+						results = append(results, []string{locale, locale})
+					}
+					return
+				},
+			})
+
+			res.Action(&admin.Action{
+				Name: "Localize",
+				Handler: func(argument *admin.ActionArgument) error {
+					var (
+						db        = argument.Context.GetDB()
+						arg       = argument.Argument.(*LocalizeActionArgument)
+						results   = res.NewSlice()
+						sqls      []string
+						sqlParams []interface{}
+					)
+
+					for _, primaryValue := range argument.PrimaryValues {
+						primaryQuerySQL, primaryParams := res.ToPrimaryQueryParams(primaryValue, argument.Context.Context)
+						sqls = append(sqls, primaryQuerySQL)
+						sqlParams = append(sqlParams, primaryParams...)
+					}
+
+					db.Set("l10n:locale", arg.From).Where(strings.Join(sqls, " OR "), sqlParams...).Find(results)
+
+					reflectResults := reflect.Indirect(reflect.ValueOf(results))
+					for i := 0; i < reflectResults.Len(); i++ {
+						for _, to := range arg.To {
+							if err := db.Set("l10n:localize_to", to).Unscoped().Save(reflectResults.Index(i).Interface()).Error; err != nil {
+								return err
+							}
+						}
+					}
+					return nil
+				},
+				Modes:      []string{"index", "menu_item"},
+				Permission: roles.Allow(roles.CRUD, roles.Anyone),
+				Resource:   argumentResource,
+			})
+		}
 	}
 }

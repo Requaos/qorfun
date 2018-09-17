@@ -7,13 +7,12 @@ import (
 	"net/http"
 	"reflect"
 
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-
 	"github.com/qor/auth"
 	"github.com/qor/auth/auth_identity"
 	"github.com/qor/auth/claims"
 	"github.com/qor/qor/utils"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 var UserInfoURL = "https://www.googleapis.com/oauth2/v3/userinfo"

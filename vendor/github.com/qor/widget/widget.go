@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/assetfs"
 	"github.com/qor/qor/resource"

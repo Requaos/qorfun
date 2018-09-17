@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/qor/admin"
 	"github.com/qor/qor"
+	"github.com/qor/admin"
 	"github.com/qor/qor/resource"
 )
 

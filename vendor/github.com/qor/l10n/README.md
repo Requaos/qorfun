@@ -1,12 +1,12 @@
 # L10n
 
-L10n gives your [GORM-backend](https://github.com/jinzhu/gorm) models the ability to localize for different locales. It can be a catalyst for the adaptation of a product, application, or document content to meet the language, cultural, and other requirements of a specific target market.
+L10n gives your [GORM](https://github.com/jinzhu/gorm) models the ability to localize for different Locales. It can be a catalyst for the adaptation of a product, application, or document content to meet the language, cultural, and other requirements of a specific target market.
 
 [![GoDoc](https://godoc.org/github.com/qor/l10n?status.svg)](https://godoc.org/github.com/qor/l10n)
 
 ## Usage
 
-L10n is using [GORM](https://github.com/jinzhu/gorm) callbacks to handle localization, so you will need to register callbacks first:
+L10n utilizes [GORM](https://github.com/jinzhu/gorm) callbacks to handle localization, so you will need to register callbacks first:
 
 ```go
 import (
@@ -20,9 +20,9 @@ func main() {
 }
 ```
 
-### Make Model Localizable
+### Making a Model Localizable
 
-Embed `l10n.Locale` into your model as an anonymous field to enable localization, for example:
+Embed `l10n.Locale` into your model as an anonymous field to enable localization, for example, in a hypothetical project which has a focus on Product management:
 
 ```go
 type Product struct {
@@ -33,17 +33,15 @@ type Product struct {
 }
 ```
 
-`l10n.Locale` will add a `language_code` column as composite primary key with existing primary keys, using GORM's AutoMigrate to create the field.
+`l10n.Locale` will add a `language_code` column as a composite primary key with existing primary keys, using [GORM](https://github.com/jinzhu/gorm)'s AutoMigrate to create the field.
 
-The `language_code` column will be used to save localized model's locale. If no locale is set, then the global locale default will be used.
-
-The default locale is `en-US`, override the default by setting `l10n.Global`, for example:
+The `language_code` column will be used to save a localized model's Locale. If no Locale is set, then the global default Locale (`en-US`) will be used. You can override the global default Locale by setting `l10n.Global`, for example:
 
 ```go
 l10n.Global = 'zh-CN'
 ```
 
-### Create localized resources
+### Create localized resources from global product
 
 ```go
 // Create global product
@@ -61,9 +59,24 @@ productCN.Name         // "中文产品"
 productCN.LanguageCode // "zh"
 ```
 
-### Keep localized resources's fields syncing
+#### Create localized resource directly
 
-Add tag `l10n:"sync"` to the fields that you wish to always sync with the *global* record:
+By default, only global data allowed to be created, local data have to localized from global one.
+
+If you want to allow user create localized data directly, you can embeded `l10n.LocaleCreatable` for your model/struct, e.g:
+
+```go
+type Product struct {
+  gorm.Model
+  Name string
+  Code string
+  l10n.LocaleCreatable
+}
+```
+
+### Keeping localized resources' fields in sync
+
+Add the tag `l10n:"sync"` to the fields that you wish to always sync with the *global* record:
 
 ```go
 type Product struct {
@@ -74,19 +87,19 @@ type Product struct {
 }
 ```
 
-Now the localized product's `Code` will be the same as the global product's `Code`. The `Code` is not changable from localized resources, and when the global record change its `Code`, localized records' `Code` will be synced automatically.
+Now the localized product's `Code` will be the same as the global product's `Code`. The `Code` is not affected by localized resources, and when the global record changes its `Code` the localized records' `Code` will be synced automatically.
 
 ### Query Modes
 
-L10n provides 5 modes for Query
+L10n provides 5 modes for querying.
 
-* global   - find global records
-* locale   - find localized records
-* reverse  - find global records that haven't been localized
-* unscoped - raw query, won't auto add `locale` conditions when query
-* default  - find localized record, if not found, return the global one
+* global   - find all global records,
+* locale   - find localized records,
+* reverse  - find global records that haven't been localized,
+* unscoped - raw query, won't auto add `locale` conditions when querying,
+* default  - find localized record, if not found, return the global one.
 
-You can specify the mode by:
+You can specify the mode in this way:
 
 ```go
 dbCN := db.Set("l10n:locale", "zh-CN")
@@ -100,19 +113,15 @@ db.Set("l10n:mode", mode).First(&product, 111)
 // SELECT * FROM products WHERE id = 111 AND language_code = 'zh-CN';
 ```
 
-## Qor Support
+## Qor Integration
 
-[QOR](http://getqor.com) is architected from the ground up to accelerate development and deployment of Content Management Systems, E-commerce Systems, and Business Applications and as such is comprised of modules that abstract common features for such systems.
-
-Although L10n could be used alone, it works very nicely with QOR - if you have requirements to manage your application's data, be sure to check QOR out!
-
-[QOR Demo:  http://demo.getqor.com/admin](http://demo.getqor.com/admin)
+Although L10n could be used alone, it integrates nicely with [QOR](https://github.com/qor/qor).
 
 [L10n Demo with QOR](http://demo.getqor.com/admin/products)
 
-By default, Qor will only allow you manage the global language. If you have configured `Auth`, QOR Admin will try to get allowed locales from the current user.
+By default, [QOR](https://github.com/qor/qor) will only allow you to manage the global language. If you have configured [Authentication](http://doc.getqor.com/admin/authentication.html), [QOR Admin](http://github.com/qor/admin) will try to obtain the allowed Locales from the current user.
 
-* Viewable Locales - locales for which the current user has read permission
+* Viewable Locales - Locales for which the current user has read permission:
 
 ```go
 func (user User) ViewableLocales() []string {
@@ -120,7 +129,7 @@ func (user User) ViewableLocales() []string {
 }
 ```
 
-* Editable Locales - locales for which the current user has manage (create/update/delete) permission
+* <a name='editable-locales'></a> Editable Locales - Locales for which the current user has manage (create/update/delete) permission:
 
 ```go
 func (user User) EditableLocales() []string {

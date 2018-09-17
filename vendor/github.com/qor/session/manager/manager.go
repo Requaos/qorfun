@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/gorilla/sessions"
-
 	"github.com/qor/middlewares"
 	"github.com/qor/session"
 	"github.com/qor/session/gorilla"

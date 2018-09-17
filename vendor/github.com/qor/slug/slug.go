@@ -2,6 +2,7 @@ package slug
 
 import (
 	"database/sql/driver"
+	"fmt"
 	"strings"
 
 	"github.com/qor/admin"
@@ -38,36 +39,59 @@ func (Slug) ConfigureQorMeta(meta resource.Metaor) {
 	if meta, ok := meta.(*admin.Meta); ok {
 		res := meta.GetBaseResource().(*admin.Resource)
 
-		admin.RegisterViewPath("github.com/qor/slug/views")
+		res.GetAdmin().RegisterViewPath("github.com/qor/slug/views")
 		res.UseTheme("slug")
 
-		name := strings.TrimSuffix(meta.Name, "WithSlug")
-		if meta := res.GetMeta(name); meta != nil {
+		slugMetaName := meta.Name
+		fieldName := strings.TrimSuffix(meta.Name, "WithSlug")
+		if meta := res.GetMeta(fieldName); meta != nil {
 			meta.Type = "slug"
-		} else {
-			res.Meta(&admin.Meta{Name: name, Type: "slug"})
 		}
 
-		var fieldName = meta.Name
-		res.AddValidator(func(record interface{}, metaValues *resource.MetaValues, context *qor.Context) error {
-			if meta := metaValues.Get(fieldName); meta != nil {
-				slug := utils.ToString(metaValues.Get(fieldName).Value)
-				if slug == "" {
-					return validations.NewError(record, fieldName, name+"'s slug can't be blank")
-				} else if strings.Contains(slug, " ") {
-					return validations.NewError(record, fieldName, name+"'s slug can't contains blank string")
+		res.AddValidator(&resource.Validator{
+			Name: fmt.Sprintf("%v-slug-validator", fieldName),
+			Handler: func(record interface{}, metaValues *resource.MetaValues, context *qor.Context) error {
+				if meta := metaValues.Get(slugMetaName); meta != nil {
+					slug := utils.ToString(metaValues.Get(slugMetaName).Value)
+					if slug == "" {
+						return validations.NewError(record, fieldName, fieldName+"'s slug can't be blank")
+					} else if strings.Contains(slug, " ") {
+						return validations.NewError(record, fieldName, fieldName+"'s slug can't contains blank string")
+					}
+				} else {
+					if field, ok := context.GetDB().NewScope(record).FieldByName(slugMetaName); ok && field.IsBlank {
+						return validations.NewError(record, fieldName, fieldName+"'s slug can't be blank")
+					}
 				}
-			} else {
-				if field, ok := context.GetDB().NewScope(record).FieldByName(fieldName); ok && field.IsBlank {
-					return validations.NewError(record, fieldName, name+"'s slug can't be blank")
-				}
-			}
-			return nil
+				return nil
+			},
 		})
 
-		res.IndexAttrs(res.IndexAttrs(), "-"+fieldName)
-		res.ShowAttrs(res.ShowAttrs(), "-"+fieldName, false)
-		res.EditAttrs(res.EditAttrs(), "-"+fieldName)
-		res.NewAttrs(res.NewAttrs(), "-"+fieldName)
+		res.OverrideIndexAttrs(func() {
+			var attrs = res.ConvertSectionToStrings(res.IndexAttrs())
+			var hasSlug bool
+			for _, attr := range attrs {
+				if attr == slugMetaName {
+					hasSlug = true
+					break
+				}
+			}
+
+			if !hasSlug {
+				res.IndexAttrs(res.IndexAttrs(), "-"+slugMetaName)
+			}
+		})
+
+		res.OverrideShowAttrs(func() {
+			res.ShowAttrs(res.ShowAttrs(), "-"+slugMetaName)
+		})
+
+		res.OverrideEditAttrs(func() {
+			res.EditAttrs(res.EditAttrs(), "-"+slugMetaName)
+		})
+
+		res.OverrideNewAttrs(func() {
+			res.NewAttrs(res.NewAttrs(), "-"+slugMetaName)
+		})
 	}
 }

@@ -2,10 +2,12 @@ package worker
 
 import (
 	"errors"
+	"html/template"
 	"net/http"
 
 	"github.com/qor/admin"
 	"github.com/qor/responder"
+	"github.com/qor/roles"
 )
 
 type workerController struct {
@@ -41,20 +43,22 @@ func (wc workerController) New(context *admin.Context) {
 func (wc workerController) Update(context *admin.Context) {
 	if job, err := wc.GetJob(context.ResourceID); err == nil {
 		if job.GetStatus() == JobStatusScheduled || job.GetStatus() == JobStatusNew {
-			if context.AddError(wc.Worker.JobResource.Decode(context.Context, job)); !context.HasError() {
-				context.AddError(wc.Worker.JobResource.CallSave(job, context.Context))
-				context.AddError(wc.Worker.AddJob(job))
-			}
+			if job.GetJob().HasPermission(roles.Update, context.Context) {
+				if context.AddError(wc.Worker.JobResource.Decode(context.Context, job)); !context.HasError() {
+					context.AddError(wc.Worker.JobResource.CallSave(job, context.Context))
+					context.AddError(wc.Worker.AddJob(job))
+				}
 
-			if !context.HasError() {
-				context.Flash(string(context.Admin.T(context.Context, "qor_worker.form.successfully_updated", "{{.Name}} was successfully updated", wc.Worker.JobResource)), "success")
-			}
+				if !context.HasError() {
+					context.Flash(string(context.Admin.T(context.Context, "qor_worker.form.successfully_updated", "{{.Name}} was successfully updated", wc.Worker.JobResource)), "success")
+				}
 
-			context.Execute("edit", job)
-			return
+				context.Execute("edit", job)
+				return
+			}
 		}
 
-		context.AddError(errors.New("only allowed to update scheduled job"))
+		context.AddError(errors.New("not allowed to update this job"))
 	} else {
 		context.AddError(err)
 	}
@@ -65,14 +69,12 @@ func (wc workerController) Update(context *admin.Context) {
 func (wc workerController) AddJob(context *admin.Context) {
 	jobResource := wc.Worker.JobResource
 	result := jobResource.NewStruct().(QorJobInterface)
-
-	var job *Job
-	for _, j := range wc.Worker.Jobs {
-		if j.Name == context.Request.Form.Get("job_name") {
-			job = j
-		}
-	}
+	job := wc.Worker.GetRegisteredJob(context.Request.Form.Get("job_name"))
 	result.SetJob(job)
+
+	if !job.HasPermission(roles.Create, context.Context) {
+		context.AddError(errors.New("don't have permission to run job"))
+	}
 
 	if context.AddError(jobResource.Decode(context.Context, result)); !context.HasError() {
 		// ensure job name is correct
@@ -81,10 +83,18 @@ func (wc workerController) AddJob(context *admin.Context) {
 		context.AddError(wc.Worker.AddJob(result))
 	}
 
-	if !context.HasError() {
-		context.Flash(string(context.Admin.T(context.Context, "qor_worker.form.successfully_created", "{{.Name}} was successfully created", jobResource)), "success")
+	if context.HasError() {
+		responder.With("html", func() {
+			context.Writer.WriteHeader(422)
+			context.Execute("edit", result)
+		}).With("json", func() {
+			context.Writer.WriteHeader(422)
+			context.JSON("index", map[string]interface{}{"errors": context.GetErrors()})
+		}).Respond(context.Request)
+		return
 	}
 
+	context.Flash(string(context.Admin.T(context.Context, "qor_worker.form.successfully_created", "{{.Name}} was successfully created", jobResource)), "success")
 	http.Redirect(context.Writer, context.Request, context.Request.URL.Path, http.StatusFound)
 }
 
@@ -99,13 +109,31 @@ func (wc workerController) RunJob(context *admin.Context) {
 }
 
 func (wc workerController) KillJob(context *admin.Context) {
-	if qorJob, err := wc.Worker.GetJob(context.ResourceID); err == nil {
-		if context.AddError(wc.Worker.KillJob(qorJob.GetJobID())); !context.HasError() {
-			context.Flash(string(context.Admin.T(context.Context, "qor_worker.form.successfully_killed", "{{.Name}} was successfully killed", wc.JobResource)), "success")
+	var msg template.HTML
+	qorJob, err := wc.Worker.GetJob(context.ResourceID)
+
+	if err == nil {
+		if err = wc.Worker.KillJob(qorJob.GetJobID()); err == nil {
+			msg = context.Admin.T(context.Context, "qor_worker.form.successfully_killed", "{{.Name}} was successfully killed", wc.JobResource)
 		} else {
-			context.Flash(string(context.Admin.T(context.Context, "qor_worker.form.failed_to_kill", "Failed to kill job {{.Name}}", wc.JobResource)), "error")
+			msg = context.Admin.T(context.Context, "qor_worker.form.failed_to_kill", "Failed to kill job {{.Name}}", wc.JobResource)
 		}
 	}
 
-	http.Redirect(context.Writer, context.Request, context.Request.URL.Path, http.StatusFound)
+	if err == nil {
+		responder.With("html", func() {
+			context.Flash(string(msg), "success")
+			http.Redirect(context.Writer, context.Request, context.Request.URL.Path, http.StatusFound)
+		}).With("json", func() {
+			context.JSON("ok", map[string]interface{}{"message": msg})
+		}).Respond(context.Request)
+	} else {
+		responder.With("html", func() {
+			context.Flash(string(msg), "error")
+			http.Redirect(context.Writer, context.Request, context.Request.URL.Path, http.StatusFound)
+		}).With("json", func() {
+			context.Writer.WriteHeader(422)
+			context.JSON("index", map[string]interface{}{"errors": []error{err}})
+		})
+	}
 }

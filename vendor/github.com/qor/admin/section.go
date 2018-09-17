@@ -24,9 +24,14 @@ import (
 //      "ColorVariations",
 //    }
 type Section struct {
-	Resource Resource
+	Resource *Resource
 	Title    string
 	Rows     [][]string
+}
+
+// String stringify section
+func (section *Section) String() string {
+	return fmt.Sprint(section.Rows)
 }
 
 func (res *Resource) generateSections(values ...interface{}) []*Section {
@@ -38,7 +43,10 @@ func (res *Resource) generateSections(values ...interface{}) []*Section {
 	for i := len(values) - 1; i >= 0; i-- {
 		value := values[i]
 		if section, ok := value.(*Section); ok {
-			sections = append(sections, uniqueSection(section, &hasColumns))
+			newSection := uniqueSection(section, &hasColumns)
+			if len(newSection.Rows) > 0 {
+				sections = append(sections, newSection)
+			}
 		} else if column, ok := value.(string); ok {
 			if strings.HasPrefix(column, "-") {
 				excludedColumns = append(excludedColumns, column)
@@ -59,7 +67,7 @@ func (res *Resource) generateSections(values ...interface{}) []*Section {
 
 	sections = reverseSections(sections)
 	for _, section := range sections {
-		section.Resource = *res
+		section.Resource = res
 	}
 	return sections
 }
@@ -121,7 +129,7 @@ func (res *Resource) ConvertSectionToMetas(sections []*Section) []*Meta {
 	for _, section := range sections {
 		for _, row := range section.Rows {
 			for _, col := range row {
-				meta := res.GetMetaOrNew(col)
+				meta := res.GetMeta(col)
 				if meta != nil {
 					metas = append(metas, meta)
 				}

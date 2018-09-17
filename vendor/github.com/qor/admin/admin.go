@@ -2,43 +2,83 @@ package admin
 
 import (
 	"html/template"
+	"path/filepath"
 	"reflect"
 
+	"github.com/jinzhu/gorm"
 	"github.com/jinzhu/inflection"
-	"github.com/theplant/cldr"
-
+	"github.com/qor/assetfs"
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"
 	"github.com/qor/qor/utils"
+	"github.com/qor/session"
+	"github.com/qor/session/manager"
+	"github.com/theplant/cldr"
 )
+
+// AdminConfig admin config struct
+type AdminConfig struct {
+	// SiteName set site's name, the name will be used as admin HTML title and admin interface will auto load javascripts, stylesheets files based on its value
+	SiteName        string
+	DB              *gorm.DB
+	Auth            Auth
+	AssetFS         assetfs.Interface
+	SessionManager  session.ManagerInterface
+	SettingsStorage SettingsStorageInterface
+	I18n            I18n
+	*Transformer
+}
 
 // Admin is a struct that used to generate admin/api interface
 type Admin struct {
-	Config           *qor.Config
-	SiteName         string
-	I18n             I18n
+	*AdminConfig
 	menus            []*Menu
 	resources        []*Resource
 	searchResources  []*Resource
-	auth             Auth
 	router           *Router
 	funcMaps         template.FuncMap
 	metaConfigorMaps map[string]func(*Meta)
 }
 
-// ResourceNamer is an interface for models that defined method `ResourceName`
-type ResourceNamer interface {
-	ResourceName() string
-}
-
 // New new admin with configuration
-func New(config *qor.Config) *Admin {
+func New(config interface{}) *Admin {
 	admin := Admin{
 		funcMaps:         make(template.FuncMap),
-		Config:           config,
 		router:           newRouter(),
-		metaConfigorMaps: metaConfigorMaps,
+		metaConfigorMaps: defaultMetaConfigorMaps,
 	}
+
+	if c, ok := config.(*qor.Config); ok {
+		admin.AdminConfig = &AdminConfig{DB: c.DB}
+	} else if c, ok := config.(*AdminConfig); ok {
+		admin.AdminConfig = c
+	} else {
+		admin.AdminConfig = &AdminConfig{}
+	}
+
+	if admin.SessionManager == nil {
+		admin.SessionManager = manager.SessionManager
+	}
+
+	if admin.Transformer == nil {
+		admin.Transformer = DefaultTransformer
+	}
+
+	if admin.AssetFS == nil {
+		admin.AssetFS = assetfs.AssetFS().NameSpace("admin")
+	}
+
+	if admin.SettingsStorage == nil {
+		admin.SettingsStorage = newSettings(admin.AdminConfig.DB)
+	}
+
+	admin.SetAssetFS(admin.AssetFS)
+
+	if admin.AdminConfig.DB != nil {
+		admin.AdminConfig.DB.AutoMigrate(&QorAdminSetting{})
+	}
+
+	admin.registerCompositePrimaryKeyCallback()
 	return &admin
 }
 
@@ -50,7 +90,31 @@ func (admin *Admin) SetSiteName(siteName string) {
 
 // SetAuth set admin's authorization gateway
 func (admin *Admin) SetAuth(auth Auth) {
-	admin.auth = auth
+	admin.Auth = auth
+}
+
+// SetAssetFS set AssetFS for admin
+func (admin *Admin) SetAssetFS(assetFS assetfs.Interface) {
+	admin.AssetFS = assetFS
+	globalAssetFSes = append(globalAssetFSes, assetFS)
+
+	admin.AssetFS.RegisterPath(filepath.Join(utils.AppRoot, "app/views/qor"))
+	admin.RegisterViewPath("github.com/qor/admin/views")
+
+	for _, viewPath := range globalViewPaths {
+		admin.RegisterViewPath(viewPath)
+	}
+}
+
+// RegisterViewPath register view path for admin
+func (admin *Admin) RegisterViewPath(pth string) {
+	if admin.AssetFS.RegisterPath(filepath.Join(utils.AppRoot, "vendor", pth)) != nil {
+		for _, gopath := range utils.GOPATH() {
+			if admin.AssetFS.RegisterPath(filepath.Join(gopath, "src", pth)) == nil {
+				break
+			}
+		}
+	}
 }
 
 // RegisterMetaConfigor register configor for a kind, it will be called when register those kind of metas
@@ -68,8 +132,7 @@ func (admin *Admin) GetRouter() *Router {
 	return admin.router
 }
 
-// NewResource initialize a new qor resource, won't add it to admin, just initialize it
-func (admin *Admin) NewResource(value interface{}, config ...*Config) *Resource {
+func (admin *Admin) newResource(value interface{}, config ...*Config) *Resource {
 	var configuration *Config
 	if len(config) > 0 {
 		configuration = config[0]
@@ -80,18 +143,12 @@ func (admin *Admin) NewResource(value interface{}, config ...*Config) *Resource 
 	}
 
 	res := &Resource{
-		Resource:    *resource.New(value),
-		Config:      configuration,
-		cachedMetas: &map[string][]*Meta{},
-		filters:     map[string]*Filter{},
-		admin:       admin,
+		Resource: resource.New(value),
+		Config:   configuration,
+		admin:    admin,
 	}
 
 	res.Permission = configuration.Permission
-
-	if configuration.PageCount == 0 {
-		configuration.PageCount = 20
-	}
 
 	if configuration.Name != "" {
 		res.Name = configuration.Name
@@ -100,7 +157,7 @@ func (admin *Admin) NewResource(value interface{}, config ...*Config) *Resource 
 	}
 
 	// Configure resource when initializing
-	modelType := admin.Config.DB.NewScope(res.Value).GetModelStruct().ModelType
+	modelType := utils.ModelType(res.Value)
 	for i := 0; i < modelType.NumField(); i++ {
 		if fieldStruct := modelType.Field(i); fieldStruct.Anonymous {
 			if injector, ok := reflect.New(fieldStruct.Type).Interface().(resource.ConfigureResourceBeforeInitializeInterface); ok {
@@ -121,24 +178,26 @@ func (admin *Admin) NewResource(value interface{}, config ...*Config) *Resource 
 		return findOneHandler(result, metaValues, context)
 	}
 
+	res.UseTheme("slideout")
+	return res
+}
+
+// NewResource initialize a new qor resource, won't add it to admin, just initialize it
+func (admin *Admin) NewResource(value interface{}, config ...*Config) *Resource {
+	res := admin.newResource(value, config...)
+	res.Config.Invisible = true
+	res.configure()
 	return res
 }
 
 // AddResource make a model manageable from admin interface
 func (admin *Admin) AddResource(value interface{}, config ...*Config) *Resource {
-	res := admin.NewResource(value, config...)
+	res := admin.newResource(value, config...)
+	admin.resources = append(admin.resources, res)
+
+	res.configure()
 
 	if !res.Config.Invisible {
-		var menuName string
-		if res.Config.Singleton {
-			menuName = res.Name
-		} else {
-			menuName = inflection.Plural(res.Name)
-		}
-
-		menu := &Menu{rawPath: res.ToParam(), Name: menuName, Permission: res.Config.Permission}
-		admin.menus = appendMenu(admin.menus, res.Config.Menu, menu)
-
 		res.Action(&Action{
 			Name:   "Delete",
 			Method: "DELETE",
@@ -148,9 +207,16 @@ func (admin *Admin) AddResource(value interface{}, config ...*Config) *Resource 
 			Permission: res.Config.Permission,
 			Modes:      []string{"menu_item"},
 		})
+
+		menuName := res.Name
+		if !res.Config.Singleton {
+			menuName = inflection.Plural(res.Name)
+		}
+		admin.AddMenu(&Menu{Name: menuName, IconName: res.Config.IconName, Permissioner: res, Priority: res.Config.Priority, Ancestors: res.Config.Menu, RelativePath: res.ToParam()})
+
+		admin.RegisterResourceRouters(res, "create", "update", "read", "delete")
 	}
 
-	admin.resources = append(admin.resources, res)
 	return res
 }
 
@@ -180,18 +246,6 @@ func (admin *Admin) GetResource(name string) (resource *Resource) {
 // AddSearchResource make a resource searchable from search center
 func (admin *Admin) AddSearchResource(resources ...*Resource) {
 	admin.searchResources = append(admin.searchResources, resources...)
-}
-
-// GetSearchResources get defined search resources from admin
-func (admin *Admin) GetSearchResources() []*Resource {
-	return admin.searchResources
-}
-
-// I18n define admin's i18n interface
-type I18n interface {
-	Scope(scope string) I18n
-	Default(value string) I18n
-	T(locale string, key string, args ...interface{}) template.HTML
 }
 
 // T call i18n backend to translate

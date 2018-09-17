@@ -1,8 +1,8 @@
 # Transition
 
-Transition is a Golang state machine implementation.
+Transition is a [Golang](http://golang.org/) [*state machine*](https://en.wikipedia.org/wiki/Finite-state_machine) implementation.
 
-Transition can be used standalone, but it works very nicely with [GORM](https://github.com/jinzhu/gorm) models. When integrated with GORM, it will also store state change logs in the database automatically.
+it can be used standalone, but it integrates nicely with [GORM](https://github.com/jinzhu/gorm) models. When integrated with [GORM](https://github.com/jinzhu/gorm), it will also store state change logs in the database automatically.
 
 [![GoDoc](https://godoc.org/github.com/qor/transition?status.svg)](https://godoc.org/github.com/qor/transition)
 
@@ -10,7 +10,7 @@ Transition can be used standalone, but it works very nicely with [GORM](https://
 
 ### Enable Transition for your struct
 
-Embed `Transition` into your struct, it will enable the state machine feature for the struct:
+Embed `transition.Transition` into your struct, it will enable the state machine feature for the struct:
 
 ```go
 import "github.com/qor/transition"
@@ -53,10 +53,10 @@ OrderStateMachine.Event("checkout").To("checkout").From("draft")
 // Define another event and what to do before and after performing the transition.
 OrderStateMachine.Event("paid").To("paid").From("checkout").Before(func(order interface{}, tx *gorm.DB) error {
   // business logic here
-  return
+  return nil
 }).After(func(order interface{}, tx *gorm.DB) error {
   // business logic here
-  return
+  return nil
 })
 
 // Different state transitions for one event
@@ -96,7 +96,7 @@ order.SetState("finished") // this will only update order's state, won't save it
 
 ## State change logs
 
-When working with GORM, it will store all state change logs in the database, use `GetStateChangeLogs` to get those logs:
+When working with [GORM](https://github.com/jinzhu/gorm), `Transition` will store all state change logs in the database. Use `GetStateChangeLogs` to get those logs.
 
 ```go
 // create the table used to store logs first
@@ -106,9 +106,9 @@ db.AutoMigrate(&transition.StateChangeLog{})
 var stateChangeLogs = transition.GetStateChangeLogs(&order, db)
 
 // type StateChangeLog struct {
-// 	 From       string  // from state
-// 	 To         string  // to state
-// 	 Note       string  // notes
+//   From       string  // from state
+//   To         string  // to state
+//   Note       string  // notes
 // }
 ```
 

@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/qor"
 	"github.com/qor/qor/utils"
 )

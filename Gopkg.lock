@@ -26,6 +26,14 @@
   version = "1.2.0"
 
 [[projects]]
+  digest = "1:320e7ead93de9fd2b0e59b50fd92a4d50c1f8ab455d96bc2eb083267453a9709"
+  name = "github.com/asaskevich/govalidator"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "ccb8e960c48f04d6935e72476ae4a51028f9e22f"
+  version = "v9"
+
+[[projects]]
   digest = "1:4bd4630b4a99978dbdfb04976ec350dfa5c903bc5c3bc91a4d4b321f8babce25"
   name = "github.com/aws/aws-sdk-go"
   packages = [
@@ -88,14 +96,6 @@
   pruneopts = "UT"
   revision = "0bd5694c78c9c3d9a3cd06a706a8f3c59296a9ac"
   version = "v1.5.0"
-
-[[projects]]
-  digest = "1:865079840386857c809b72ce300be7580cb50d3d3129ce11bf9aa6ca2bc1934a"
-  name = "github.com/fatih/color"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "5b77d2a35fb0ede96d138fc9a99f5c9b6aef11b4"
-  version = "v1.7.0"
 
 [[projects]]
   digest = "1:a9fe0f8ff72c388d0128e88ce5f3c27d37dcd0950acd7cdb8323555f12463396"
@@ -276,22 +276,6 @@
   version = "v1.0.0"
 
 [[projects]]
-  digest = "1:c658e84ad3916da105a761660dcaeb01e63416c8ec7bc62256a9b411a05fcd67"
-  name = "github.com/mattn/go-colorable"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "167de6bfdfba052fa6b2d3664c8f5272e23c9072"
-  version = "v0.0.9"
-
-[[projects]]
-  digest = "1:0981502f9816113c9c8c4ac301583841855c8cf4da8c72f696b3ebedf6d0e4e5"
-  name = "github.com/mattn/go-isatty"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "6ca4dbf54d38eea1a992b3c722a76a5d1c4cb25c"
-  version = "v0.0.4"
-
-[[projects]]
   digest = "1:1fc201f179a7d45f944655de3cdbfb0a8a226fd525569454e31ca87f9e4bb677"
   name = "github.com/microcosm-cc/bluemonday"
   packages = ["."]
@@ -316,20 +300,20 @@
   revision = "e1b463078c284c499c35b600e7239ddb40e90d86"
 
 [[projects]]
-  digest = "1:5755ef06ac57ac89942e59a79d003bffdaee13bc2586123ad92158f4788acc00"
+  branch = "master"
+  digest = "1:41bbfcc81d33f2f10c41e360dfb992bdc720e24924526897231ab86dd56abb3a"
   name = "github.com/qor/activity"
   packages = ["."]
   pruneopts = "UT"
-  revision = "d5216b4f32a8be71d851f71c9c9f5834eeaa5b7d"
-  version = "v1.0"
+  revision = "06b5e02b7fa92664750be4526644080806febfd4"
 
 [[projects]]
-  digest = "1:13bc8ad5cc807655078a68a520bb3831ee9c28482d374e704d71a0b41070625b"
+  branch = "master"
+  digest = "1:9f4ad2a5a87babafd93cdbf18a8c8a23971e3a0b5b33708c431bd12a98ad96fb"
   name = "github.com/qor/admin"
   packages = ["."]
   pruneopts = "UT"
-  revision = "a5c271dab2795bb9d7f855194ec0408355120e69"
-  version = "v1.0"
+  revision = "039c82d89cc3437b66ba13a730043134f312e6e6"
 
 [[projects]]
   branch = "master"
@@ -403,15 +387,15 @@
   version = "v1.0"
 
 [[projects]]
-  digest = "1:83377b64ab38beae3c4a344acab005387d05b5a00403c1cb52610b07008aafaa"
+  branch = "master"
+  digest = "1:0d2f6e3a0ff60dceea30da93930e43035641b8a263cf8bebd53c8912df9bdda0"
   name = "github.com/qor/exchange"
   packages = [
     ".",
     "backends/csv",
   ]
   pruneopts = "UT"
-  revision = "51f5693155fb48ded2e7f5ecc6696d17f026bd36"
-  version = "v1.0"
+  revision = "56350463269fe5ed247c0bde851b25255ce19893"
 
 [[projects]]
   branch = "master"
@@ -430,7 +414,8 @@
   revision = "202965d1156a683314b57d4c365de65da479be90"
 
 [[projects]]
-  digest = "1:4487439f01ed6d04ec9520acb35c4145ddab4ebe16bc191f62fc716dd97ee2de"
+  branch = "master"
+  digest = "1:4176585cbf5e5b05df984e2cd61d43d0d775abca216cf2098e93778a3f4db8d3"
   name = "github.com/qor/i18n"
   packages = [
     ".",
@@ -440,24 +425,23 @@
     "inline_edit",
   ]
   pruneopts = "UT"
-  revision = "f65b849b92f215805e777a5e6524ca7859fbae32"
-  version = "v1.0"
+  revision = "399406033dd3645e859b0de4aead1c2a73064128"
 
 [[projects]]
-  digest = "1:ebcc373f6d67a9379b21cb8fe8dcdbbb3162f831a34796e9fe6838d7fa3c4ba8"
+  branch = "master"
+  digest = "1:c725f3f3d1dfacbb171cefc1983c5a2a7dd1c6b09356c50581dee5952a306be3"
   name = "github.com/qor/l10n"
   packages = ["."]
   pruneopts = "UT"
-  revision = "19f40df87552bf480558ca008afd2e2f3e18af02"
-  version = "v1.0"
+  revision = "ace6ea40bbe988d843ab4859328ca46d93f4af0b"
 
 [[projects]]
-  digest = "1:8d776a27c0ade940e2e3ebb97afc28b86001f72014443eb620fe14f3ddd67612"
+  branch = "master"
+  digest = "1:33717763ded60859bbf44d6580b5919be2ad0297eb7b8c98396495dfe8de3a02"
   name = "github.com/qor/location"
   packages = ["."]
   pruneopts = "UT"
-  revision = "e5b68b4ab00d9bf1670978dc38ba4203b6c6edf9"
-  version = "v1.0"
+  revision = "ac94d7efe435415da34b00562e80709ebe08dffb"
 
 [[projects]]
   branch = "master"
@@ -482,14 +466,6 @@
   ]
   pruneopts = "UT"
   revision = "eb44a416187340241f0b9cf98fef509b2460d9a6"
-
-[[projects]]
-  digest = "1:a1554f1501c5af12147ae2d8fe489df20287ca95ed16bb8bce307a3e93e50778"
-  name = "github.com/qor/media_library"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "1d6df1beadc61cbf5eb2df84b7631e499db668a5"
-  version = "v1.0"
 
 [[projects]]
   branch = "master"
@@ -547,7 +523,8 @@
   revision = "ae6205525a1fdbe4022f269f8d73d6442bc4920d"
 
 [[projects]]
-  digest = "1:bb9577a85af789d19c87a02b1ff89dfc1c6027cb56080d255d4ac7dc2e5411c7"
+  branch = "master"
+  digest = "1:11a30a0e35bcfdfe57a1564929d453bb3f98e5da349185738d54a929a3b5ee5e"
   name = "github.com/qor/qor"
   packages = [
     ".",
@@ -555,8 +532,7 @@
     "utils",
   ]
   pruneopts = "UT"
-  revision = "d1402d1caffb8f9c05d73fa5bfaae2853c4191fb"
-  version = "v1.0"
+  revision = "a9b667cbbf18e5b11cca010970b5a9dc40855ffd"
 
 [[projects]]
   branch = "master"
@@ -567,36 +543,36 @@
   revision = "b4161ed6f84819fb3a2d13d5c9e6872ef76d8128"
 
 [[projects]]
-  digest = "1:edc9df0ce19d83a61446e75e51b9b11a0bf916f49f751edf8eb3e00cedcdd22f"
+  branch = "master"
+  digest = "1:871bb97c32e369770045fac202122b7da42ea3bbf6d3ea8e886b32ab3a1fc2a1"
   name = "github.com/qor/render"
   packages = ["."]
   pruneopts = "UT"
-  revision = "ab08a9cb69bef67462dcfea4a721d2798f53609f"
-  version = "v1.0"
+  revision = "63566e46f01b134ae9882a59a06518e82a903231"
 
 [[projects]]
-  digest = "1:4d7e309108709883ce2067c488982206ecc25b81835dd6911c6f63fecb4e767c"
+  branch = "master"
+  digest = "1:1b90231d81fce4a2c61be9bbae0e6cc35556ab7bf87e574e9dc334a1985125df"
   name = "github.com/qor/responder"
   packages = ["."]
   pruneopts = "UT"
-  revision = "ecae0be66c1a6a441001b0b5eeef51f8bc27d42a"
-  version = "v1.0"
+  revision = "b6def473574f621fee316696ad120d4fbf470826"
 
 [[projects]]
-  digest = "1:dcb3a1c2516be16359ba7933bdfaac7daaf969b347230ab1f4cdbd9a594fe6d2"
+  branch = "master"
+  digest = "1:be8425925ff99bd3fb026add07beb8069fed5c8e199b1cd55a871f832d9f6688"
   name = "github.com/qor/roles"
   packages = ["."]
   pruneopts = "UT"
-  revision = "f1e05694734518c0ce2dc21151e0ecfccf4db8f4"
-  version = "v1.0"
+  revision = "d6375609fe3e5da46ad3a574fae244fb633e79c1"
 
 [[projects]]
-  digest = "1:c1af24fb2e490a24774d2136771ab272db31870eaa46516a649d48f7da8846ff"
+  branch = "master"
+  digest = "1:d1e4d7484f7e6d9622456b9a26c6f3bd0ef874f10b720fbdf4681718b7b5840f"
   name = "github.com/qor/seo"
   packages = ["."]
   pruneopts = "UT"
-  revision = "d3b73f386e58baa109e8ab6a76cc7afd15de9d96"
-  version = "v1.0"
+  revision = "41673c7570c77b0099016081e09a6eaa03557c6e"
 
 [[projects]]
   digest = "1:966dd5713e00a89714966f50adde736a32013e4f69634166989e44be741d6a77"
@@ -619,36 +595,36 @@
   revision = "8206b0adab706a6ef3ee6fabba2584d34429a26a"
 
 [[projects]]
-  digest = "1:934a2aefdb502b77279bbd20d8d83927cd6eb27e28bfa9dae2b5862c7fa4df6e"
+  branch = "master"
+  digest = "1:b32c7d428ebe5f4031b32d71a39ce7f586d349a8813e40bcdab51cd2a45238a2"
   name = "github.com/qor/slug"
   packages = ["."]
   pruneopts = "UT"
-  revision = "14b21ed4b944f089d57ea3457e251610d7387e85"
-  version = "v1.0"
+  revision = "545ed2e364522495bbeec88c2afd7a378b59084d"
 
 [[projects]]
-  digest = "1:dbf04cc624a054175b9fa42033e77779d4dc5bd93d950aef95b0afd02f3c36a5"
+  branch = "master"
+  digest = "1:0c30a794b2b717b5a2dc777f43c5c90dffbe3299cb3e92cbe16ca9babcef225f"
   name = "github.com/qor/sorting"
   packages = ["."]
   pruneopts = "UT"
-  revision = "1b2d20f88789101866845913454edecb2c5c28c4"
-  version = "v1.0"
+  revision = "8308410fca545a341c40f3513328be4f9646fc45"
 
 [[projects]]
-  digest = "1:541ae0c18b5b23d7662fda3262f88d7d189fbd24eebc92ccdb42dd1519206679"
+  branch = "master"
+  digest = "1:c678ac04f0114299ce7d03817c57470fec0ee23f1f547fcb95a6979e72c7a88f"
   name = "github.com/qor/transition"
   packages = ["."]
   pruneopts = "UT"
-  revision = "a7bb4cb3a187f3016d536bd5ff4a24624d7a0f1d"
-  version = "v1.0"
+  revision = "4015a3eee19c49a63b1d22beab1c0c084e72c53b"
 
 [[projects]]
-  digest = "1:1a44c28f6de12e934afea5ff48ccd61a779526dc587afb60f30ebbfae838c2fd"
+  branch = "master"
+  digest = "1:85cb5adb402858878704bc087b8f74fb12d1e56bddbba38e3d94693a14ad93f4"
   name = "github.com/qor/validations"
   packages = ["."]
   pruneopts = "UT"
-  revision = "87c1296c75e72a8f3247beab65c48c50b7b66a7a"
-  version = "v1.0"
+  revision = "f364bca61b46bd48a5e32552a37758864fdf005d"
 
 [[projects]]
   branch = "master"
@@ -667,12 +643,12 @@
   revision = "56710e5bb5a4958921245cc7cbe25208f91465c1"
 
 [[projects]]
-  digest = "1:9dc5b5db1362b5fb198fbb58802cd84dda37f3459d195041ccbd42e6342869e4"
+  branch = "master"
+  digest = "1:46807708893dfbba591a982dfddd981692edc149438d7f0ec7b26de5f468a9d3"
   name = "github.com/qor/worker"
   packages = ["."]
   pruneopts = "UT"
-  revision = "aeceec94f095ed75c4134feb4b0cc5b4440745b3"
-  version = "v1.0"
+  revision = "71c2b85f719a35ee1b21c4558af3da195f8b2c84"
 
 [[projects]]
   branch = "master"
@@ -748,14 +724,6 @@
   ]
   pruneopts = "UT"
   revision = "d2e6202438beef2727060aa7cabdd924d92ebfd9"
-
-[[projects]]
-  branch = "master"
-  digest = "1:6eb2645d74b43d9c87b51947df39f7c668a4f422cd512053f7f6f75bfaad0197"
-  name = "golang.org/x/sys"
-  packages = ["unix"]
-  pruneopts = "UT"
-  revision = "d0be0721c37eeb5299f245a996a483160fc36940"
 
 [[projects]]
   digest = "1:740cec287074ade445ab57356e36f54d3e0d33c0d0ebf77047934da33af2c1c0"

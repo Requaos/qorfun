@@ -1,10 +1,10 @@
 # Exchange
 
-Exchange is a Golang library that allows a database to be exported or imported to or from a file.
+Exchange allows a database to be exported to or imported from a file.
 
-Data can optionally be validated during import and export.
+Data can be optionally validated during import and export.
 
-Data can optionally be processed during import.
+Data can be optionally processed during import.
 
 [![GoDoc](https://godoc.org/github.com/qor/exchange?status.svg)](https://godoc.org/github.com/qor/exchange)
 
@@ -27,11 +27,14 @@ func main() {
   // Define context environment
   context := &qor.Context{DB: db}
 
-  // Import products.csv into database
+  // Import products into database from file `products.csv`
   product.Import(csv.New("products.csv"), context)
 
-  // Export products into products.csv
-  product.Export(csv.New("products.csv"), context)
+  // Import products into database from csv reader
+  product.Import(csv.New(reader), context)
+
+  // Export products to writer
+  product.Export(csv.New(writer), context)
 }
 ```
 

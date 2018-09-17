@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/i18n"
 )
 

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/auth/claims"
 )
 

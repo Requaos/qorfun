@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/publish"
 )
 

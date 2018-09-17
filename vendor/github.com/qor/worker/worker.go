@@ -5,12 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"
+	"github.com/qor/roles"
 )
 
 const (
@@ -31,8 +32,8 @@ const (
 )
 
 // New create Worker with Config
-func New(config ...Config) *Worker {
-	var cfg Config
+func New(config ...*Config) *Worker {
+	var cfg = &Config{}
 	if len(config) > 0 {
 		cfg = config[0]
 	}
@@ -45,7 +46,7 @@ func New(config ...Config) *Worker {
 		cfg.Queue = NewCronQueue()
 	}
 
-	return &Worker{Config: &cfg}
+	return &Worker{Config: cfg}
 }
 
 // Config worker config
@@ -60,12 +61,13 @@ type Worker struct {
 	*Config
 	JobResource *admin.Resource
 	Jobs        []*Job
+	mounted     bool
 }
 
 // ConfigureQorResourceBeforeInitialize a method used to config Worker for qor admin
 func (worker *Worker) ConfigureQorResourceBeforeInitialize(res resource.Resourcer) {
 	if res, ok := res.(*admin.Resource); ok {
-		admin.RegisterViewPath("github.com/qor/worker/views")
+		res.GetAdmin().RegisterViewPath("github.com/qor/worker/views")
 		res.UseTheme("worker")
 
 		worker.Admin = res.GetAdmin()
@@ -79,14 +81,14 @@ func (worker *Worker) ConfigureQorResourceBeforeInitialize(res resource.Resource
 
 		for _, status := range []string{JobStatusScheduled, JobStatusNew, JobStatusRunning, JobStatusDone, JobStatusException} {
 			var status = status
-			worker.JobResource.Scope(&admin.Scope{Name: status, Handle: func(db *gorm.DB, ctx *qor.Context) *gorm.DB {
+			worker.JobResource.Scope(&admin.Scope{Name: status, Handler: func(db *gorm.DB, ctx *qor.Context) *gorm.DB {
 				return db.Where("status = ?", status)
 			}})
 		}
 
 		// default scope
 		worker.JobResource.Scope(&admin.Scope{
-			Handle: func(db *gorm.DB, ctx *qor.Context) *gorm.DB {
+			Handler: func(db *gorm.DB, ctx *qor.Context) *gorm.DB {
 				if jobName := ctx.Request.URL.Query().Get("job"); jobName != "" {
 					return db.Where("kind = ?", jobName)
 				}
@@ -104,13 +106,23 @@ func (worker *Worker) ConfigureQorResourceBeforeInitialize(res resource.Resource
 					return db.Where("kind IS NULL")
 				}
 
+				{
+					var jobNames []string
+					for _, job := range worker.Jobs {
+						jobNames = append(jobNames, job.Name)
+					}
+					if len(jobNames) > 0 {
+						return db.Where("kind IN (?)", jobNames)
+					}
+				}
+
 				return db
 			},
 			Default: true,
 		})
 
 		// Auto Migration
-		worker.Admin.Config.DB.AutoMigrate(worker.Config.Job)
+		worker.Admin.DB.AutoMigrate(worker.Config.Job)
 
 		// Configure jobs
 		for _, job := range worker.Jobs {
@@ -125,9 +137,12 @@ func (worker *Worker) ConfigureQorResourceBeforeInitialize(res resource.Resource
 func (worker *Worker) ConfigureQorResource(res resource.Resourcer) {
 	if res, ok := res.(*admin.Resource); ok {
 		// Parse job
-		var qorJobID = flag.String("qor-job", "", "Qor Job ID")
-		var runAnother = flag.Bool("run-another", false, "Run another qor job")
-		flag.Parse()
+		cmdLine := flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+		qorJobID := cmdLine.String("qor-job", "", "Qor Job ID")
+		runAnother := cmdLine.Bool("run-another", false, "Run another qor job")
+		cmdLine.Parse(os.Args[1:])
+		worker.mounted = true
+
 		if *qorJobID != "" {
 			if *runAnother == true {
 				if newJob := worker.saveAnotherJob(*qorJobID); newJob != nil {
@@ -143,16 +158,20 @@ func (worker *Worker) ConfigureQorResource(res resource.Resourcer) {
 				os.Exit(0)
 			} else {
 				fmt.Println(err)
-				os.Exit(1)
+				// os.Exit(1)
 			}
 		}
 
 		// register view funcmaps
-		worker.Admin.RegisterFuncMap("get_grouped_jobs", func(context *admin.Context) map[string][]*Job {
+		worker.Admin.RegisterFuncMap("get_grouped_jobs", func(worker *Worker, context *admin.Context) map[string][]*Job {
 			var groupedJobs = map[string][]*Job{}
 			var groupName = context.Request.URL.Query().Get("group")
 			var jobName = context.Request.URL.Query().Get("job")
 			for _, job := range worker.Jobs {
+				if !(job.HasPermission(roles.Read, context.Context) && job.HasPermission(roles.Create, context.Context)) {
+					continue
+				}
+
 				if (groupName == "" || groupName == job.Group) && (jobName == "" || jobName == job.Name) {
 					groupedJobs[job.Group] = append(groupedJobs[job.Group], job)
 				}
@@ -164,14 +183,15 @@ func (worker *Worker) ConfigureQorResource(res resource.Resourcer) {
 		router := worker.Admin.GetRouter()
 		controller := workerController{Worker: worker}
 		jobParamIDName := worker.JobResource.ParamIDName()
-		router.Get(res.ToParam(), controller.Index)
-		router.Get(res.ToParam()+"/new", controller.New)
-		router.Get(fmt.Sprintf("%v/%v", res.ToParam(), jobParamIDName), controller.Show)
-		router.Get(fmt.Sprintf("%v/%v/edit", res.ToParam(), jobParamIDName), controller.Show)
-		router.Post(fmt.Sprintf("%v/%v/run", res.ToParam(), jobParamIDName), controller.RunJob)
-		router.Post(res.ToParam(), controller.AddJob)
-		router.Put(fmt.Sprintf("%v/%v", res.ToParam(), jobParamIDName), controller.Update)
-		router.Delete(fmt.Sprintf("%v/%v", res.ToParam(), jobParamIDName), controller.KillJob)
+
+		router.Get(res.ToParam(), controller.Index, &admin.RouteConfig{Resource: worker.JobResource})
+		router.Get(res.ToParam()+"/new", controller.New, &admin.RouteConfig{Resource: worker.JobResource})
+		router.Get(fmt.Sprintf("%v/%v", res.ToParam(), jobParamIDName), controller.Show, &admin.RouteConfig{Resource: worker.JobResource})
+		router.Get(fmt.Sprintf("%v/%v/edit", res.ToParam(), jobParamIDName), controller.Show, &admin.RouteConfig{Resource: worker.JobResource})
+		router.Post(fmt.Sprintf("%v/%v/run", res.ToParam(), jobParamIDName), controller.RunJob, &admin.RouteConfig{Resource: worker.JobResource})
+		router.Post(res.ToParam(), controller.AddJob, &admin.RouteConfig{Resource: worker.JobResource})
+		router.Put(fmt.Sprintf("%v/%v", res.ToParam(), jobParamIDName), controller.Update, &admin.RouteConfig{Resource: worker.JobResource})
+		router.Delete(fmt.Sprintf("%v/%v", res.ToParam(), jobParamIDName), controller.KillJob, &admin.RouteConfig{Resource: worker.JobResource})
 	}
 }
 
@@ -182,8 +202,23 @@ func (worker *Worker) SetQueue(queue Queue) {
 
 // RegisterJob register a job into Worker
 func (worker *Worker) RegisterJob(job *Job) error {
+	if worker.mounted {
+		debug.PrintStack()
+		fmt.Printf("Job should be registered before Worker mounted into admin, but %v is registered after that", job.Name)
+	}
+
 	job.Worker = worker
 	worker.Jobs = append(worker.Jobs, job)
+	return nil
+}
+
+// GetRegisteredJob register a job into Worker
+func (worker *Worker) GetRegisteredJob(name string) *Job {
+	for _, job := range worker.Jobs {
+		if job.Name == name {
+			return job
+		}
+	}
 	return nil
 }
 
@@ -216,9 +251,10 @@ func (worker *Worker) AddJob(qorJob QorJobInterface) error {
 func (worker *Worker) RunJob(jobID string) error {
 	qorJob, err := worker.GetJob(jobID)
 
-	if err == nil {
+	if qorJob != nil && err == nil {
 		defer func() {
 			if r := recover(); r != nil {
+				qorJob.AddLog(string(debug.Stack()))
 				qorJob.SetProgressText(fmt.Sprint(r))
 				qorJob.SetStatus(JobStatusException)
 			}

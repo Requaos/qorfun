@@ -1,12 +1,12 @@
 # Sorting
 
-Sorting is used to add sorting and reordering abilities to [GORM-backend](https://github.com/jinzhu/gorm) models.
+Sorting adds reordering abilities to [GORM](https://github.com/jinzhu/gorm) models and sorts collections.
 
 [![GoDoc](https://godoc.org/github.com/qor/sorting?status.svg)](https://godoc.org/github.com/qor/sorting)
 
 ### Register GORM Callbacks
 
-Sorting is utilises [GORM](https://github.com/jinzhu/gorm) callbacks to log data, so you  will need to register callbacks first:
+Sorting utilises [GORM](https://github.com/jinzhu/gorm) callbacks to log data, so you will need to register callbacks first:
 
 ```go
 import (
@@ -22,7 +22,7 @@ func main() {
 
 ### Sort Modes
 
-Sorting has defined two modes which could be used as anonymous fields in a model.
+Sorting two modes which can be applied as anonymous fields in a model.
 
 - Ascending mode:smallest first (`sorting.Sorting`)
 - Descending mode: smallest last (`sorting.SortingDESC`)
@@ -33,7 +33,7 @@ They can be used as follows:
 // Ascending mode
 type Category struct {
   gorm.Model
-  sorting.Sorting // this will register a `position` column to model Category, add it with gorm AutoMigrate
+  sorting.Sorting // this will register a `position` column to model Category, used to save record's order
 }
 
 db.Find(&categories)
@@ -42,14 +42,14 @@ db.Find(&categories)
 // Descending mode
 type Product struct {
   gorm.Model
-  sorting.SortingDESC // this will register a `position` column to model Product, add it with gorm AutoMigrate
+  sorting.SortingDESC // this will register a `position` column to model Product, used to save record's order
 }
 
 db.Find(&products)
 // SELECT * FROM products ORDER BY position DESC;
 ```
 
-### Reorder
+### Reordering
 
 ```go
 // Move Up
@@ -65,15 +65,78 @@ sorting.MoveTo(&db, &product, 1)
 // If a record is in positon 5, it will be brought to 1
 ```
 
-## Qor Support
+## Sorting Collections
 
-[QOR](http://getqor.com) is architected from the ground up to accelerate development and deployment of Content Management Systems, E-commerce Systems, and Business Applications and as such is comprised of modules that abstract common features for such systems.
+Sorts a slice of data:
 
-Although Sorting could be used alone, it works very nicely with QOR - if you have requirements to manage your application's data, be sure to check QOR out!
+```go
+sorter := sorting.SortableCollection{
+  PrimaryKeys: []string{"5", "3", "1", "2"}
+}
 
-[QOR Demo:  http://demo.getqor.com/admin](http://demo.getqor.com/admin)
+products := []Product{
+  {Model: gorm.Model{ID: 1}, Code: "1"},
+  {Model: gorm.Model{ID: 2}, Code: "2"},
+  {Model: gorm.Model{ID: 3}, Code: "3"},
+  {Model: gorm.Model{ID: 3}, Code: "4"},
+  {Model: gorm.Model{ID: 3}, Code: "5"},
+}
+
+sorter.Sort(products)
+
+products // => []Product{
+         //      {Model: gorm.Model{ID: 3}, Code: "5"},
+         //      {Model: gorm.Model{ID: 3}, Code: "3"},
+         //      {Model: gorm.Model{ID: 1}, Code: "1"},
+         //      {Model: gorm.Model{ID: 2}, Code: "2"},
+         //      {Model: gorm.Model{ID: 3}, Code: "4"},
+         //    }
+```
+
+### Sorting GORM-backend Models
+
+After enabling sorting modes for [GORM](https://github.com/jinzhu/gorm) models, [QOR Admin](https://github.com/qor/admin) will automatically enable the sorting feature for the resource.
 
 [Sorting Demo with QOR](http://demo.getqor.com/admin/colors?sorting=true)
+
+### Sorting Collections
+
+If you want to make a sortable [select_many](http://doc.getqor.com/admin/metas/select-many.html), [collection_edit](http://doc.getqor.com/admin/metas/collection-edit.html) field, You could add a `sorting.SortableCollection` field with name: Field's name + 'Sorter'; which is used to save above field's data order. That Field will also be identified as sortable in [QOR Admin](https://github.com/qor/admin).
+
+```go
+// For model relations
+type Product struct {
+  gorm.Model
+  l10n.Locale
+  Collections           []Collection
+  CollectionsSorter     sorting.SortableCollection
+  ColorVariations       []ColorVariation `l10n:"sync"`
+  ColorVariationsSorter sorting.SortableCollection
+}
+
+// For virtual arguments
+type selectedProductsArgument struct {
+  Products       []string
+  ProductsSorter sorting.SortableCollection
+}
+
+selectedProductsResource := Admin.NewResource(&selectedProductsArgument{})
+selectedProductsResource.Meta(&admin.Meta{Name: "Products", Type: "select_many", Collection: func(value interface{}, context *qor.Context) [][]string {
+  var collectionValues [][]string
+  var products []*models.Product
+  db.DB.Find(&products)
+  for _, product := range products {
+    collectionValues = append(collectionValues, []string{fmt.Sprint(product.ID), product.Name})
+  }
+  return collectionValues
+}})
+
+Widgets.RegisterWidget(&widget.Widget{
+  Name:      "Products",
+  Templates: []string{"products"},
+  Setting:   selectedProductsResource,
+}
+```
 
 ## License
 

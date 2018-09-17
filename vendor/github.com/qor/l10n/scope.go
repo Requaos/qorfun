@@ -4,24 +4,31 @@ import (
 	"reflect"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/qor/utils"
 )
 
-func isLocalizable(scope *gorm.Scope) (isLocalizable bool) {
+// IsLocalizable return model is localizable or not
+func IsLocalizable(scope *gorm.Scope) (IsLocalizable bool) {
 	if scope.GetModelStruct().ModelType == nil {
 		return false
 	}
-	_, isLocalizable = reflect.New(scope.GetModelStruct().ModelType).Interface().(l10nInterface)
+	_, IsLocalizable = reflect.New(scope.GetModelStruct().ModelType).Interface().(l10nInterface)
 	return
 }
 
 type localeCreatableInterface interface {
+	CreatableFromLocale()
+}
+
+type localeCreatableInterface2 interface {
 	LocaleCreatable()
 }
 
 func isLocaleCreatable(scope *gorm.Scope) (ok bool) {
-	_, ok = reflect.New(scope.GetModelStruct().ModelType).Interface().(localeCreatableInterface)
+	if _, ok = reflect.New(scope.GetModelStruct().ModelType).Interface().(localeCreatableInterface); ok {
+		return
+	}
+	_, ok = reflect.New(scope.GetModelStruct().ModelType).Interface().(localeCreatableInterface2)
 	return
 }
 
@@ -33,13 +40,23 @@ func setLocale(scope *gorm.Scope, locale string) {
 	}
 }
 
-func getLocale(scope *gorm.Scope) (locale string, isLocale bool) {
+func getQueryLocale(scope *gorm.Scope) (locale string, isLocale bool) {
 	if str, ok := scope.DB().Get("l10n:locale"); ok {
-		if locale, ok := str.(string); ok {
-			return locale, (locale != Global) && (locale != "")
+		if locale, ok := str.(string); ok && locale != "" {
+			return locale, locale != Global
 		}
 	}
 	return Global, false
+}
+
+func getLocale(scope *gorm.Scope) (locale string, isLocale bool) {
+	if str, ok := scope.DB().Get("l10n:localize_to"); ok {
+		if locale, ok := str.(string); ok && locale != "" {
+			return locale, locale != Global
+		}
+	}
+
+	return getQueryLocale(scope)
 }
 
 func isSyncField(field *gorm.StructField) bool {

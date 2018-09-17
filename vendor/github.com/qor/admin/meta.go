@@ -1,136 +1,42 @@
 package admin
 
 import (
-	"fmt"
+	"database/sql"
 	"reflect"
 	"regexp"
 	"strconv"
 	"time"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"
 	"github.com/qor/qor/utils"
 	"github.com/qor/roles"
 )
 
+// MetaConfigInterface meta config interface
+type MetaConfigInterface interface {
+	resource.MetaConfigInterface
+}
+
 // Meta meta struct definition
 type Meta struct {
+	*resource.Meta
 	Name            string
 	FieldName       string
 	Label           string
 	Type            string
-	FormattedValuer func(interface{}, *qor.Context) interface{}
-	Valuer          func(interface{}, *qor.Context) interface{}
-	Setter          func(resource interface{}, metaValue *resource.MetaValue, context *qor.Context)
-	Metas           []resource.Metaor
-	Resource        *Resource
-	Collection      interface{}
-	GetCollection   func(interface{}, *qor.Context) [][]string
+	Setter          func(record interface{}, metaValue *resource.MetaValue, context *qor.Context)
+	Valuer          func(record interface{}, context *qor.Context) (result interface{})
+	FormattedValuer func(record interface{}, context *qor.Context) (result interface{})
 	Permission      *roles.Permission
-	resource.Meta
+	Config          MetaConfigInterface
+	Collection      interface{}
+	Resource        *Resource
+
+	metas        []resource.Metaor
 	baseResource *Resource
-}
-
-// GetMetas get sub metas
-func (meta *Meta) GetMetas() []resource.Metaor {
-	if len(meta.Metas) > 0 {
-		return meta.Metas
-	} else if meta.Resource == nil {
-		return []resource.Metaor{}
-	} else {
-		return meta.Resource.GetMetas([]string{})
-	}
-}
-
-// GetResource get resource from meta
-func (meta *Meta) GetResource() resource.Resourcer {
-	return meta.Resource
-}
-
-// DBName get meta's db name
-func (meta *Meta) DBName() string {
-	if meta.FieldStruct != nil {
-		return meta.FieldStruct.DBName
-	}
-	return ""
-}
-
-func getField(fields []*gorm.StructField, name string) (*gorm.StructField, bool) {
-	for _, field := range fields {
-		if field.Name == name || field.DBName == name {
-			return field, true
-		}
-	}
-	return nil, false
-}
-
-func (meta *Meta) setBaseResource(base *Resource) {
-	res := meta.Resource
-	res.base = base
-
-	findOneHandle := res.FindOneHandler
-	res.FindOneHandler = func(value interface{}, metaValues *resource.MetaValues, context *qor.Context) (err error) {
-		if metaValues != nil {
-			return findOneHandle(value, metaValues, context)
-		}
-
-		if primaryKey := res.GetPrimaryValue(context.Request); primaryKey != "" {
-			clone := context.Clone()
-			baseValue := base.NewStruct()
-			if err = base.FindOneHandler(baseValue, nil, clone); err == nil {
-				scope := clone.GetDB().NewScope(nil)
-				sql := fmt.Sprintf("%v = ?", scope.Quote(res.PrimaryDBName()))
-				err = context.GetDB().Model(baseValue).Where(sql, primaryKey).Related(value).Error
-			}
-		}
-		return
-	}
-
-	res.FindManyHandler = func(value interface{}, context *qor.Context) error {
-		var (
-			err       error
-			clone     = context.Clone()
-			baseValue = base.NewStruct()
-		)
-
-		if err = base.FindOneHandler(baseValue, nil, clone); err == nil {
-			base.FindOneHandler(baseValue, nil, clone)
-			return context.GetDB().Model(baseValue).Related(value).Error
-		}
-		return err
-	}
-
-	res.SaveHandler = func(value interface{}, context *qor.Context) error {
-		var (
-			err       error
-			clone     = context.Clone()
-			baseValue = base.NewStruct()
-		)
-
-		if err = base.FindOneHandler(baseValue, nil, clone); err == nil {
-			base.FindOneHandler(baseValue, nil, clone)
-			return context.GetDB().Model(baseValue).Association(meta.FieldName).Append(value).Error
-		}
-		return err
-	}
-
-	res.DeleteHandler = func(value interface{}, context *qor.Context) (err error) {
-		var clone = context.Clone()
-		var baseValue = base.NewStruct()
-		if primryKey := res.GetPrimaryValue(context.Request); primryKey != "" {
-			var scope = clone.GetDB().NewScope(nil)
-			var sql = fmt.Sprintf("%v = ?", scope.Quote(res.PrimaryDBName()))
-			if err = context.GetDB().First(value, sql, primryKey).Error; err == nil {
-				if err = base.FindOneHandler(baseValue, nil, clone); err == nil {
-					base.FindOneHandler(baseValue, nil, clone)
-					return context.GetDB().Model(baseValue).Association(meta.FieldName).Delete(value).Error
-				}
-			}
-		}
-		return
-	}
+	processors   []*MetaProcessor
 }
 
 // SetPermission set meta's permission
@@ -139,21 +45,94 @@ func (meta *Meta) SetPermission(permission *roles.Permission) {
 	meta.Meta.Permission = permission
 	if meta.Resource != nil {
 		meta.Resource.Permission = permission
-		for _, meta := range meta.Resource.Metas {
-			meta.SetPermission(permission.Concat(meta.Meta.Permission))
-		}
 	}
 }
 
-func (meta *Meta) updateMeta() {
-	meta.Meta = resource.Meta{
-		Name:            meta.Name,
-		FieldName:       meta.FieldName,
-		Setter:          meta.Setter,
-		FormattedValuer: meta.FormattedValuer,
-		Valuer:          meta.Valuer,
-		Permission:      meta.Permission.Concat(meta.baseResource.Permission),
-		Resource:        meta.baseResource,
+// HasPermission check has permission or not
+func (meta Meta) HasPermission(mode roles.PermissionMode, context *qor.Context) bool {
+	var roles = []interface{}{}
+	for _, role := range context.Roles {
+		roles = append(roles, role)
+	}
+	if meta.Permission != nil {
+		return meta.Permission.HasPermission(mode, roles...)
+	}
+
+	if meta.Resource != nil {
+		return meta.Resource.HasPermission(mode, context)
+	}
+
+	if meta.baseResource != nil {
+		return meta.baseResource.HasPermission(mode, context)
+	}
+
+	return true
+}
+
+// GetResource get resource from meta
+func (meta *Meta) GetResource() resource.Resourcer {
+	if meta.Resource == nil {
+		return nil
+	}
+	return meta.Resource
+}
+
+// GetMetas get sub metas
+func (meta *Meta) GetMetas() []resource.Metaor {
+	if len(meta.metas) > 0 {
+		return meta.metas
+	} else if meta.Resource == nil {
+		return []resource.Metaor{}
+	} else {
+		return meta.Resource.GetMetas([]string{})
+	}
+}
+
+// MetaProcessor meta processor which will be run each time update Meta
+type MetaProcessor struct {
+	Name    string
+	Handler func(*Meta)
+}
+
+// AddProcessor add meta processors, it will be run when add them and each time update Meta
+func (meta *Meta) AddProcessor(processor *MetaProcessor) {
+	if processor != nil && processor.Handler != nil {
+		processor.Handler(meta)
+
+		for idx, p := range meta.processors {
+			if p.Name == processor.Name {
+				meta.processors[idx] = processor
+				return
+			}
+		}
+
+		meta.processors = append(meta.processors, processor)
+	}
+}
+
+func (meta *Meta) configure() {
+	if meta.Meta == nil {
+		meta.Meta = &resource.Meta{
+			Name:            meta.Name,
+			FieldName:       meta.FieldName,
+			Setter:          meta.Setter,
+			Valuer:          meta.Valuer,
+			FormattedValuer: meta.FormattedValuer,
+			BaseResource:    meta.baseResource,
+			Resource:        meta.Resource,
+			Permission:      meta.Permission,
+			Config:          meta.Config,
+		}
+	} else {
+		meta.Meta.Name = meta.Name
+		meta.Meta.FieldName = meta.FieldName
+		meta.Meta.Setter = meta.Setter
+		meta.Meta.Valuer = meta.Valuer
+		meta.Meta.FormattedValuer = meta.FormattedValuer
+		meta.Meta.BaseResource = meta.baseResource
+		meta.Meta.Resource = meta.Resource
+		meta.Meta.Permission = meta.Permission
+		meta.Meta.Config = meta.Config
 	}
 
 	meta.PreInitialize()
@@ -180,50 +159,103 @@ func (meta *Meta) updateMeta() {
 	}
 
 	// Set Meta Type
-	if meta.Type == "" && hasColumn {
-		if relationship := meta.FieldStruct.Relationship; relationship != nil {
-			if relationship.Kind == "has_one" {
-				meta.Type = "single_edit"
-			} else if relationship.Kind == "has_many" {
-				meta.Type = "collection_edit"
-			} else if relationship.Kind == "belongs_to" {
-				meta.Type = "select_one"
-			} else if relationship.Kind == "many_to_many" {
-				meta.Type = "select_many"
+	if hasColumn {
+		if meta.Type == "" {
+			if _, ok := reflect.New(fieldType).Interface().(sql.Scanner); ok {
+				if fieldType.Kind() == reflect.Struct {
+					fieldType = reflect.Indirect(reflect.New(fieldType)).Field(0).Type()
+				}
 			}
-		} else {
-			switch fieldType.Kind() {
-			case reflect.String:
-				var tag = meta.FieldStruct.Tag
-				if size, ok := utils.ParseTagOption(tag.Get("sql"))["SIZE"]; ok {
-					if i, _ := strconv.Atoi(size); i > 255 {
+
+			if relationship := meta.FieldStruct.Relationship; relationship != nil {
+				if relationship.Kind == "has_one" {
+					meta.Type = "single_edit"
+				} else if relationship.Kind == "has_many" {
+					meta.Type = "collection_edit"
+				} else if relationship.Kind == "belongs_to" {
+					meta.Type = "select_one"
+				} else if relationship.Kind == "many_to_many" {
+					meta.Type = "select_many"
+				}
+			} else {
+				switch fieldType.Kind() {
+				case reflect.String:
+					var tags = meta.FieldStruct.TagSettings
+					if size, ok := tags["SIZE"]; ok {
+						if i, _ := strconv.Atoi(size); i > 255 {
+							meta.Type = "text"
+						} else {
+							meta.Type = "string"
+						}
+					} else if text, ok := tags["TYPE"]; ok && text == "text" {
 						meta.Type = "text"
 					} else {
 						meta.Type = "string"
 					}
-				} else if text, ok := utils.ParseTagOption(tag.Get("sql"))["TYPE"]; ok && text == "text" {
-					meta.Type = "text"
-				} else {
-					meta.Type = "string"
+				case reflect.Bool:
+					meta.Type = "checkbox"
+				default:
+					if regexp.MustCompile(`^(.*)?(u)?(int)(\d+)?`).MatchString(fieldType.Kind().String()) {
+						meta.Type = "number"
+					} else if regexp.MustCompile(`^(.*)?(float)(\d+)?`).MatchString(fieldType.Kind().String()) {
+						meta.Type = "float"
+					} else if _, ok := reflect.New(fieldType).Interface().(*time.Time); ok {
+						meta.Type = "datetime"
+					} else {
+						if fieldType.Kind() == reflect.Struct {
+							meta.Type = "single_edit"
+						} else if fieldType.Kind() == reflect.Slice {
+							refelectType := fieldType.Elem()
+							for refelectType.Kind() == reflect.Ptr {
+								refelectType = refelectType.Elem()
+							}
+							if refelectType.Kind() == reflect.Struct {
+								meta.Type = "collection_edit"
+							}
+						}
+					}
 				}
-			case reflect.Bool:
-				meta.Type = "checkbox"
-			default:
-				if regexp.MustCompile(`^(.*)?(u)?(int)(\d+)?`).MatchString(fieldType.Kind().String()) {
-					meta.Type = "number"
-				} else if regexp.MustCompile(`^(.*)?(float)(\d+)?`).MatchString(fieldType.Kind().String()) {
-					meta.Type = "float"
-				} else if _, ok := reflect.New(fieldType).Interface().(*time.Time); ok {
-					meta.Type = "datetime"
+			}
+		} else {
+			if relationship := meta.FieldStruct.Relationship; relationship != nil {
+				if (relationship.Kind == "has_one" || relationship.Kind == "has_many") && meta.Meta.Setter == nil && (meta.Type == "select_one" || meta.Type == "select_many") {
+					meta.SetSetter(func(resource interface{}, metaValue *resource.MetaValue, context *qor.Context) {
+						scope := &gorm.Scope{Value: resource}
+						reflectValue := reflect.Indirect(reflect.ValueOf(resource))
+						field := reflectValue.FieldByName(meta.FieldName)
+
+						if field.Kind() == reflect.Ptr {
+							if field.IsNil() {
+								field.Set(utils.NewValue(field.Type()).Elem())
+							}
+
+							for field.Kind() == reflect.Ptr {
+								field = field.Elem()
+							}
+						}
+
+						primaryKeys := utils.ToArray(metaValue.Value)
+						if len(primaryKeys) > 0 {
+							// set current field value to blank and replace it with new value
+							field.Set(reflect.Zero(field.Type()))
+							context.GetDB().Where(primaryKeys).Find(field.Addr().Interface())
+						}
+
+						if !scope.PrimaryKeyZero() {
+							context.GetDB().Model(resource).Association(meta.FieldName).Replace(field.Interface())
+							field.Set(reflect.Zero(field.Type()))
+						}
+					})
 				}
 			}
 		}
 	}
 
 	{ // Set Meta Resource
-		if hasColumn && (meta.FieldStruct.Relationship != nil) {
+		if hasColumn {
 			if meta.Resource == nil {
 				var result interface{}
+
 				if fieldType.Kind() == reflect.Struct {
 					result = reflect.New(fieldType).Interface()
 				} else if fieldType.Kind() == reflect.Slice {
@@ -231,90 +263,35 @@ func (meta *Meta) updateMeta() {
 					for refelectType.Kind() == reflect.Ptr {
 						refelectType = refelectType.Elem()
 					}
-					result = reflect.New(refelectType).Interface()
+					if refelectType.Kind() == reflect.Struct {
+						result = reflect.New(refelectType).Interface()
+					}
 				}
 
-				res := meta.baseResource.GetAdmin().NewResource(result)
-				res.configure()
-				meta.Resource = res
+				if result != nil {
+					res := meta.baseResource.NewResource(result)
+					meta.Resource = res
+					meta.Meta.Permission = meta.Meta.Permission.Concat(res.Config.Permission)
+				}
 			}
 
 			if meta.Resource != nil {
 				permission := meta.Resource.Permission.Concat(meta.Meta.Permission)
+				meta.Meta.Resource = meta.Resource
 				meta.Resource.Permission = permission
 				meta.SetPermission(permission)
-				meta.setBaseResource(meta.baseResource)
-			}
-		}
-	}
-
-	scope := &gorm.Scope{Value: meta.baseResource.Value}
-	scopeField, _ := scope.FieldByName(meta.GetFieldName())
-
-	{ // Format Meta FormattedValueOf
-		if meta.FormattedValuer == nil {
-			if meta.Type == "select_one" {
-				meta.SetFormattedValuer(func(value interface{}, context *qor.Context) interface{} {
-					return utils.Stringify(meta.GetValuer()(value, context))
-				})
-			} else if meta.Type == "select_many" {
-				meta.SetFormattedValuer(func(value interface{}, context *qor.Context) interface{} {
-					reflectValue := reflect.Indirect(reflect.ValueOf(meta.GetValuer()(value, context)))
-					var results []string
-					for i := 0; i < reflectValue.Len(); i++ {
-						results = append(results, utils.Stringify(reflectValue.Index(i).Interface()))
-					}
-					return results
-				})
-			}
-		}
-	}
-
-	{ // Format Meta Collection
-		if meta.Collection != nil {
-			if maps, ok := meta.Collection.([]string); ok {
-				meta.GetCollection = func(interface{}, *qor.Context) (results [][]string) {
-					for _, value := range maps {
-						results = append(results, []string{value, value})
-					}
-					return
-				}
-			} else if maps, ok := meta.Collection.([][]string); ok {
-				meta.GetCollection = func(interface{}, *qor.Context) [][]string {
-					return maps
-				}
-			} else if f, ok := meta.Collection.(func(interface{}, *qor.Context) [][]string); ok {
-				meta.GetCollection = f
-			} else {
-				utils.ExitWithMsg("Unsupported Collection format for meta %v of resource %v", meta.Name, reflect.TypeOf(meta.baseResource.Value))
-			}
-		} else if meta.Type == "select_one" || meta.Type == "select_many" {
-			if scopeField.Relationship != nil {
-				fieldType := scopeField.StructField.Struct.Type
-				if fieldType.Kind() == reflect.Slice {
-					fieldType = fieldType.Elem()
-				}
-
-				meta.GetCollection = func(value interface{}, context *qor.Context) (results [][]string) {
-					values := reflect.New(reflect.SliceOf(fieldType)).Interface()
-					context.GetDB().Find(values)
-					reflectValues := reflect.Indirect(reflect.ValueOf(values))
-					for i := 0; i < reflectValues.Len(); i++ {
-						scope := scope.New(reflectValues.Index(i).Interface())
-						primaryKey := fmt.Sprintf("%v", scope.PrimaryKeyValue())
-						results = append(results, []string{primaryKey, utils.Stringify(reflectValues.Index(i).Interface())})
-					}
-					return
-				}
-			} else {
-				utils.ExitWithMsg("%v meta type %v needs Collection", meta.Name, meta.Type)
 			}
 		}
 	}
 
 	meta.FieldName = meta.GetFieldName()
 
-	// call ConfigureMetaInterface
+	// call meta config's ConfigureMetaInterface
+	if meta.Config != nil {
+		meta.Config.ConfigureQorMeta(meta)
+	}
+
+	// call field's ConfigureMetaInterface
 	if meta.FieldStruct != nil {
 		if injector, ok := reflect.New(meta.FieldStruct.Struct.Type).Interface().(resource.ConfigureMetaInterface); ok {
 			injector.ConfigureQorMeta(meta)
@@ -329,4 +306,16 @@ func (meta *Meta) updateMeta() {
 			}
 		}
 	}
+
+	for _, processor := range meta.processors {
+		processor.Handler(meta)
+	}
+}
+
+// DBName get meta's db name, used in index page for sorting
+func (meta *Meta) DBName() string {
+	if meta.FieldStruct != nil {
+		return meta.FieldStruct.DBName
+	}
+	return ""
 }

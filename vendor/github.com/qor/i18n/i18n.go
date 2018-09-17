@@ -6,13 +6,10 @@ import (
 	"html/template"
 	"io/ioutil"
 	"net/http"
-	"os"
-	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/theplant/cldr"
 
 	"github.com/qor/admin"
 	"github.com/qor/cache"
@@ -20,6 +17,7 @@ import (
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"
 	"github.com/qor/qor/utils"
+	"github.com/theplant/cldr"
 )
 
 // Default default locale for i18n
@@ -27,11 +25,13 @@ var Default = "en-US"
 
 // I18n struct that hold all translations
 type I18n struct {
-	Resource   *admin.Resource
-	scope      string
-	value      string
-	Backends   []Backend
-	CacheStore cache.CacheStoreInterface
+	Resource        *admin.Resource
+	scope           string
+	value           string
+	Backends        []Backend
+	FallbackLocales map[string][]string
+	fallbackLocales []string
+	cacheStore      cache.CacheStoreInterface
 }
 
 // ResourceName change display name in qor admin
@@ -56,20 +56,33 @@ type Translation struct {
 
 // New initialize I18n with backends
 func New(backends ...Backend) *I18n {
-	i18n := &I18n{Backends: backends, CacheStore: memory.New()}
+	i18n := &I18n{Backends: backends, cacheStore: memory.New()}
+	i18n.loadToCacheStore()
+	return i18n
+}
+
+// SetCacheStore set i18n's cache store
+func (i18n *I18n) SetCacheStore(cacheStore cache.CacheStoreInterface) {
+	i18n.cacheStore = cacheStore
+	i18n.loadToCacheStore()
+}
+
+func (i18n *I18n) loadToCacheStore() {
+	backends := i18n.Backends
 	for i := len(backends) - 1; i >= 0; i-- {
 		var backend = backends[i]
 		for _, translation := range backend.LoadTranslations() {
 			i18n.AddTranslation(translation)
 		}
 	}
-	return i18n
 }
 
+// LoadTranslations load translations as map `map[locale]map[key]*Translation`
 func (i18n *I18n) LoadTranslations() map[string]map[string]*Translation {
 	var translations = map[string]map[string]*Translation{}
 
-	for _, backend := range i18n.Backends {
+	for i := len(i18n.Backends); i > 0; i-- {
+		backend := i18n.Backends[i-1]
 		for _, translation := range backend.LoadTranslations() {
 			if translations[translation.Locale] == nil {
 				translations[translation.Locale] = map[string]*Translation{}
@@ -82,7 +95,7 @@ func (i18n *I18n) LoadTranslations() map[string]map[string]*Translation {
 
 // AddTranslation add translation
 func (i18n *I18n) AddTranslation(translation *Translation) error {
-	return i18n.CacheStore.Set(cacheKey(translation.Locale, translation.Key), translation)
+	return i18n.cacheStore.Set(cacheKey(translation.Locale, translation.Key), translation)
 }
 
 // SaveTranslation save translation
@@ -103,48 +116,73 @@ func (i18n *I18n) DeleteTranslation(translation *Translation) (err error) {
 		backend.DeleteTranslation(translation)
 	}
 
-	return i18n.CacheStore.Delete(cacheKey(translation.Locale, translation.Key))
+	return i18n.cacheStore.Delete(cacheKey(translation.Locale, translation.Key))
 }
 
 // Scope i18n scope
 func (i18n *I18n) Scope(scope string) admin.I18n {
-	return &I18n{CacheStore: i18n.CacheStore, scope: scope, value: i18n.value, Backends: i18n.Backends, Resource: i18n.Resource}
+	return &I18n{cacheStore: i18n.cacheStore, scope: scope, value: i18n.value, Backends: i18n.Backends, Resource: i18n.Resource, FallbackLocales: i18n.FallbackLocales, fallbackLocales: i18n.fallbackLocales}
 }
 
 // Default default value of translation if key is missing
 func (i18n *I18n) Default(value string) admin.I18n {
-	return &I18n{CacheStore: i18n.CacheStore, scope: i18n.scope, value: value, Backends: i18n.Backends, Resource: i18n.Resource}
+	return &I18n{cacheStore: i18n.cacheStore, scope: i18n.scope, value: value, Backends: i18n.Backends, Resource: i18n.Resource, FallbackLocales: i18n.FallbackLocales, fallbackLocales: i18n.fallbackLocales}
+}
+
+// Fallbacks fallback to locale if translation doesn't exist in specified locale
+func (i18n *I18n) Fallbacks(locale ...string) admin.I18n {
+	return &I18n{cacheStore: i18n.cacheStore, scope: i18n.scope, value: i18n.value, Backends: i18n.Backends, Resource: i18n.Resource, FallbackLocales: i18n.FallbackLocales, fallbackLocales: locale}
 }
 
 // T translate with locale, key and arguments
 func (i18n *I18n) T(locale, key string, args ...interface{}) template.HTML {
 	var (
-		value          = i18n.value
-		translationKey = key
+		value           = i18n.value
+		translationKey  = key
+		fallbackLocales = i18n.fallbackLocales
 	)
 
 	if locale == "" {
 		locale = Default
 	}
 
+	if locales, ok := i18n.FallbackLocales[locale]; ok {
+		fallbackLocales = append(fallbackLocales, locales...)
+	}
+	fallbackLocales = append(fallbackLocales, Default)
+
 	if i18n.scope != "" {
 		translationKey = strings.Join([]string{i18n.scope, key}, ".")
 	}
 
 	var translation Translation
-	if err := i18n.CacheStore.Unmarshal(cacheKey(locale, key), &translation); err != nil || translation.Value == "" {
-		// Get default translation if not translated
-		if err := i18n.CacheStore.Unmarshal(cacheKey(Default, key), &translation); err != nil || translation.Value == "" {
-			// If not initialized
-			translation = Translation{Key: translationKey, Value: value, Locale: locale, Backend: i18n.Backends[0]}
+	if err := i18n.cacheStore.Unmarshal(cacheKey(locale, key), &translation); err != nil || translation.Value == "" {
+		for _, fallbackLocale := range fallbackLocales {
+			if err := i18n.cacheStore.Unmarshal(cacheKey(fallbackLocale, key), &translation); err == nil && translation.Value != "" {
+				break
+			}
+		}
 
-			// Save translation
-			i18n.SaveTranslation(&translation)
+		if translation.Value == "" {
+			// Get default translation if not translated
+			if err := i18n.cacheStore.Unmarshal(cacheKey(Default, key), &translation); err != nil || translation.Value == "" {
+				// If not initialized
+				var defaultBackend Backend
+				if len(i18n.Backends) > 0 {
+					defaultBackend = i18n.Backends[0]
+				}
+				translation = Translation{Key: translationKey, Value: value, Locale: locale, Backend: defaultBackend}
+
+				// Save translation
+				i18n.SaveTranslation(&translation)
+			}
 		}
 	}
 
 	if translation.Value != "" {
 		value = translation.Value
+	} else {
+		value = key
 	}
 
 	if str, err := cldr.Parse(locale, value, args...); err == nil {
@@ -157,7 +195,7 @@ func (i18n *I18n) T(locale, key string, args ...interface{}) template.HTML {
 // RenderInlineEditAssets render inline edit html, it is using: http://vitalets.github.io/x-editable/index.html
 // You could use Bootstrap or JQuery UI by set isIncludeExtendAssetLib to false and load files by yourself
 func RenderInlineEditAssets(isIncludeJQuery bool, isIncludeExtendAssetLib bool) (template.HTML, error) {
-	for _, gopath := range strings.Split(os.Getenv("GOPATH"), ":") {
+	for _, gopath := range utils.GOPATH() {
 		var content string
 		var hasError bool
 
@@ -166,13 +204,13 @@ func RenderInlineEditAssets(isIncludeJQuery bool, isIncludeExtendAssetLib bool) 
 		}
 
 		if isIncludeExtendAssetLib {
-			if extendLib, err := ioutil.ReadFile(path.Join(gopath, "src/github.com/qor/i18n/views/themes/i18n/inline-edit-libs.tmpl")); err == nil {
+			if extendLib, err := ioutil.ReadFile(filepath.Join(gopath, "src/github.com/qor/i18n/views/themes/i18n/inline-edit-libs.tmpl")); err == nil {
 				content += string(extendLib)
 			} else {
 				hasError = true
 			}
 
-			if css, err := ioutil.ReadFile(path.Join(gopath, "src/github.com/qor/i18n/views/themes/i18n/assets/stylesheets/i18n-inline.css")); err == nil {
+			if css, err := ioutil.ReadFile(filepath.Join(gopath, "src/github.com/qor/i18n/views/themes/i18n/assets/stylesheets/i18n-inline.css")); err == nil {
 				content += fmt.Sprintf("<style>%s</style>", string(css))
 			} else {
 				hasError = true
@@ -180,7 +218,7 @@ func RenderInlineEditAssets(isIncludeJQuery bool, isIncludeExtendAssetLib bool) 
 
 		}
 
-		if js, err := ioutil.ReadFile(path.Join(gopath, "src/github.com/qor/i18n/views/themes/i18n/assets/javascripts/i18n-inline.js")); err == nil {
+		if js, err := ioutil.ReadFile(filepath.Join(gopath, "src/github.com/qor/i18n/views/themes/i18n/assets/javascripts/i18n-inline.js")); err == nil {
 			content += fmt.Sprintf("<script type=\"text/javascript\">%s</script>", string(js))
 		} else {
 			hasError = true
@@ -315,26 +353,33 @@ func (i18n *I18n) ConfigureQorResource(res resource.Resourcer) {
 
 			pagination := context.Searcher.Pagination
 			pagination.Total = len(keys)
-			pagination.PrePage = 25
+			pagination.PerPage, _ = strconv.Atoi(context.Request.URL.Query().Get("per_page"))
 			pagination.CurrentPage, _ = strconv.Atoi(context.Request.URL.Query().Get("page"))
+
 			if pagination.CurrentPage == 0 {
 				pagination.CurrentPage = 1
 			}
-			if pagination.CurrentPage > 0 {
-				pagination.Pages = pagination.Total / pagination.PrePage
+
+			if pagination.PerPage == 0 {
+				pagination.PerPage = 25
 			}
+
+			if pagination.CurrentPage > 0 {
+				pagination.Pages = pagination.Total / pagination.PerPage
+			}
+
 			context.Searcher.Pagination = pagination
 
 			var paginationKeys []string
 			if pagination.CurrentPage == -1 {
 				paginationKeys = keys
 			} else {
-				lastIndex := pagination.CurrentPage * pagination.PrePage
+				lastIndex := pagination.CurrentPage * pagination.PerPage
 				if pagination.Total < lastIndex {
 					lastIndex = pagination.Total
 				}
 
-				startIndex := (pagination.CurrentPage - 1) * pagination.PrePage
+				startIndex := (pagination.CurrentPage - 1) * pagination.PerPage
 				if lastIndex >= startIndex {
 					paginationKeys = keys[startIndex:lastIndex]
 				}
@@ -360,11 +405,11 @@ func (i18n *I18n) ConfigureQorResource(res resource.Resourcer) {
 
 		controller := i18nController{i18n}
 		router := res.GetAdmin().GetRouter()
-		router.Get(res.ToParam(), controller.Index)
-		router.Post(res.ToParam(), controller.Update)
-		router.Put(res.ToParam(), controller.Update)
+		router.Get(res.ToParam(), controller.Index, &admin.RouteConfig{Resource: res})
+		router.Post(res.ToParam(), controller.Update, &admin.RouteConfig{Resource: res})
+		router.Put(res.ToParam(), controller.Update, &admin.RouteConfig{Resource: res})
 
-		admin.RegisterViewPath("github.com/qor/i18n/views")
+		res.GetAdmin().RegisterViewPath("github.com/qor/i18n/views")
 	}
 }
 

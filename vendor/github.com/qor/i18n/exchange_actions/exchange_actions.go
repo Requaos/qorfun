@@ -4,32 +4,54 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/qor/admin"
 	"github.com/qor/i18n"
-	"github.com/qor/media_library"
+	"github.com/qor/media/oss"
 	"github.com/qor/worker"
 )
 
+type ExportTranslationArgument struct {
+	Scope string
+}
+
+type ImportTranslationArgument struct {
+	TranslationsFile oss.OSS
+}
+
 // RegisterExchangeJobs register i18n jobs into worker
 func RegisterExchangeJobs(I18n *i18n.I18n, Worker *worker.Worker) {
-	admin.RegisterViewPath("github.com/qor/i18n/exchange_actions/views")
+	if I18n.Resource == nil {
+		debug.PrintStack()
+		fmt.Println("I18n should be registered into `Admin` before register jobs")
+		return
+	}
+
+	Admin := I18n.Resource.GetAdmin()
+	Admin.RegisterViewPath("github.com/qor/i18n/exchange_actions/views")
+
+	// Export Translations
+	exportTranslationResource := Admin.NewResource(&ExportTranslationArgument{})
+	exportTranslationResource.Meta(&admin.Meta{Name: "Scope", Type: "select_one", Collection: []string{"All", "Backend", "Frontend"}})
 
 	Worker.RegisterJob(&worker.Job{
-		Name:  "Export Translations",
-		Group: "Export/Import Translations From CSV file",
+		Name:     "Export Translations",
+		Group:    "Export/Import Translations From CSV file",
+		Resource: exportTranslationResource,
 		Handler: func(arg interface{}, qorJob worker.QorJobInterface) (err error) {
 			var (
 				locales          []string
 				translationKeys  []string
 				translationsMap  = map[string]bool{}
 				filename         = fmt.Sprintf("/downloads/translations.%v.csv", time.Now().UnixNano())
-				fullFilename     = path.Join("public", filename)
+				fullFilename     = filepath.Join("public", filename)
 				i18nTranslations = I18n.LoadTranslations()
+				scope            = arg.(*ExportTranslationArgument).Scope
 			)
 			qorJob.AddLog("Exporting translations...")
 
@@ -67,7 +89,22 @@ func RegisterExchangeJobs(I18n *i18n.I18n, Worker *worker.Worker) {
 			sort.Strings(translationKeys)
 
 			// Write CSV file
+			var (
+				recordCount         = len(translationKeys)
+				perCount            = recordCount/20 + 1
+				processedRecordLogs = []string{}
+				index               = 0
+				progressCount       = 0
+			)
 			for _, translationKey := range translationKeys {
+				// Filter out translation by scope
+				index++
+				if scope == "Backend" && !strings.HasPrefix(translationKey, "qor_") {
+					continue
+				}
+				if scope == "Frontend" && strings.HasPrefix(translationKey, "qor_") {
+					continue
+				}
 				var translations = []string{translationKey}
 				for _, locale := range locales {
 					var value string
@@ -77,6 +114,14 @@ func RegisterExchangeJobs(I18n *i18n.I18n, Worker *worker.Worker) {
 					translations = append(translations, value)
 				}
 				writer.Write(translations)
+				processedRecordLogs = append(processedRecordLogs, fmt.Sprintf("Exported %v\n", strings.Join(translations, ",")))
+				if index == perCount {
+					qorJob.AddLog(strings.Join(processedRecordLogs, ""))
+					processedRecordLogs = []string{}
+					progressCount++
+					qorJob.SetProgress(uint(float32(progressCount) / float32(20) * 100))
+					index = 0
+				}
 			}
 			writer.Flush()
 
@@ -86,40 +131,55 @@ func RegisterExchangeJobs(I18n *i18n.I18n, Worker *worker.Worker) {
 	})
 
 	// Import Translations
-	type importTranslationArgument struct {
-		TranslationsFile media_library.FileSystem
-	}
 
 	Worker.RegisterJob(&worker.Job{
 		Name:     "Import Translations",
 		Group:    "Export/Import Translations From CSV file",
-		Resource: Worker.Admin.NewResource(&importTranslationArgument{}),
+		Resource: Admin.NewResource(&ImportTranslationArgument{}),
 		Handler: func(arg interface{}, qorJob worker.QorJobInterface) (err error) {
-			importTranslationArgument := arg.(*importTranslationArgument)
+			importTranslationArgument := arg.(*ImportTranslationArgument)
 			qorJob.AddLog("Importing translations...")
-			if csvfile, err := os.Open(path.Join("public", importTranslationArgument.TranslationsFile.URL())); err == nil {
+			if csvfile, err := os.Open(filepath.Join("public", importTranslationArgument.TranslationsFile.URL())); err == nil {
 				reader := csv.NewReader(csvfile)
 				reader.TrimLeadingSpace = true
 				if records, err := reader.ReadAll(); err == nil {
 					if len(records) > 1 && len(records[0]) > 1 {
-						locales := records[0][1:]
-
+						var (
+							recordCount         = len(records) - 1
+							perCount            = recordCount/20 + 1
+							processedRecordLogs = []string{}
+							locales             = records[0][1:]
+							index               = 1
+						)
 						for _, values := range records[1:] {
+							logMsg := ""
 							for idx, value := range values[1:] {
 								if value == "" {
-									I18n.DeleteTranslation(&i18n.Translation{
-										Key:    values[0],
-										Locale: locales[idx],
-									})
+									if values[0] != "" && locales[idx] != "" {
+										I18n.DeleteTranslation(&i18n.Translation{
+											Key:    values[0],
+											Locale: locales[idx],
+										})
+										logMsg += fmt.Sprintf("%v/%v Deleted %v,%v\n", index, recordCount, locales[idx], values[0])
+									}
 								} else {
 									I18n.SaveTranslation(&i18n.Translation{
 										Key:    values[0],
 										Locale: locales[idx],
 										Value:  value,
 									})
+									logMsg += fmt.Sprintf("%v/%v Imported %v,%v,%v\n", index, recordCount, locales[idx], values[0], value)
 								}
 							}
+							processedRecordLogs = append(processedRecordLogs, logMsg)
+							if len(processedRecordLogs) == perCount {
+								qorJob.AddLog(strings.Join(processedRecordLogs, ""))
+								processedRecordLogs = []string{}
+								qorJob.SetProgress(uint(float32(index) / float32(recordCount+1) * 100))
+							}
+							index++
 						}
+						qorJob.AddLog(strings.Join(processedRecordLogs, ""))
 					}
 				}
 				qorJob.AddLog("Imported translations")

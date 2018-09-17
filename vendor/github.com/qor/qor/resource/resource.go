@@ -1,10 +1,10 @@
 package resource
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/qor"
 	"github.com/qor/qor/utils"
 	"github.com/qor/roles"
@@ -36,13 +36,14 @@ type ConfigureResourceInterface interface {
 type Resource struct {
 	Name            string
 	Value           interface{}
+	PrimaryFields   []*gorm.StructField
 	FindManyHandler func(interface{}, *qor.Context) error
 	FindOneHandler  func(interface{}, *MetaValues, *qor.Context) error
 	SaveHandler     func(interface{}, *qor.Context) error
 	DeleteHandler   func(interface{}, *qor.Context) error
 	Permission      *roles.Permission
-	validators      []func(interface{}, *MetaValues, *qor.Context) error
-	processors      []func(interface{}, *MetaValues, *qor.Context) error
+	Validators      []*Validator
+	Processors      []*Processor
 	primaryField    *gorm.Field
 }
 
@@ -57,6 +58,7 @@ func New(value interface{}) *Resource {
 	res.FindManyHandler = res.findManyHandler
 	res.SaveHandler = res.saveHandler
 	res.DeleteHandler = res.deleteHandler
+	res.SetPrimaryFields()
 	return res
 }
 
@@ -65,23 +67,78 @@ func (res *Resource) GetResource() *Resource {
 	return res
 }
 
+// SetPrimaryFields set primary fields
+func (res *Resource) SetPrimaryFields(fields ...string) error {
+	scope := gorm.Scope{Value: res.Value}
+	res.PrimaryFields = nil
+
+	if len(fields) > 0 {
+		for _, fieldName := range fields {
+			if field, ok := scope.FieldByName(fieldName); ok {
+				res.PrimaryFields = append(res.PrimaryFields, field.StructField)
+			} else {
+				return fmt.Errorf("%v is not a valid field for resource %v", fieldName, res.Name)
+			}
+		}
+		return nil
+	}
+
+	if primaryField := scope.PrimaryField(); primaryField != nil {
+		res.PrimaryFields = []*gorm.StructField{primaryField.StructField}
+		return nil
+	}
+
+	return fmt.Errorf("no valid primary field for resource %v", res.Name)
+}
+
+// Validator validator struct
+type Validator struct {
+	Name    string
+	Handler func(interface{}, *MetaValues, *qor.Context) error
+}
+
 // AddValidator add validator to resource, it will invoked when creating, updating, and will rollback the change if validator return any error
-func (res *Resource) AddValidator(fc func(interface{}, *MetaValues, *qor.Context) error) {
-	res.validators = append(res.validators, fc)
+func (res *Resource) AddValidator(validator *Validator) {
+	for idx, v := range res.Validators {
+		if v.Name == validator.Name {
+			res.Validators[idx] = validator
+			return
+		}
+	}
+
+	res.Validators = append(res.Validators, validator)
+}
+
+// Processor processor struct
+type Processor struct {
+	Name    string
+	Handler func(interface{}, *MetaValues, *qor.Context) error
 }
 
 // AddProcessor add processor to resource, it is used to process data before creating, updating, will rollback the change if it return any error
-func (res *Resource) AddProcessor(fc func(interface{}, *MetaValues, *qor.Context) error) {
-	res.processors = append(res.processors, fc)
+func (res *Resource) AddProcessor(processor *Processor) {
+	for idx, p := range res.Processors {
+		if p.Name == processor.Name {
+			res.Processors[idx] = processor
+			return
+		}
+	}
+	res.Processors = append(res.Processors, processor)
 }
 
 // NewStruct initialize a struct for the Resource
 func (res *Resource) NewStruct() interface{} {
-	return reflect.New(reflect.Indirect(reflect.ValueOf(res.Value)).Type()).Interface()
+	if res.Value == nil {
+		return nil
+	}
+	return reflect.New(utils.Indirect(reflect.ValueOf(res.Value)).Type()).Interface()
 }
 
 // NewSlice initialize a slice of struct for the Resource
 func (res *Resource) NewSlice() interface{} {
+	if res.Value == nil {
+		return nil
+	}
 	sliceType := reflect.SliceOf(reflect.TypeOf(res.Value))
 	slice := reflect.MakeSlice(sliceType, 0, 0)
 	slicePtr := reflect.New(sliceType)
@@ -99,32 +156,10 @@ func (res *Resource) HasPermission(mode roles.PermissionMode, context *qor.Conte
 	if res == nil || res.Permission == nil {
 		return true
 	}
-	return res.Permission.HasPermission(mode, context.Roles...)
-}
 
-// PrimaryField return gorm's primary field
-func (res *Resource) PrimaryField() *gorm.Field {
-	if res.primaryField == nil {
-		scope := gorm.Scope{Value: res.Value}
-		res.primaryField = scope.PrimaryField()
+	var roles = []interface{}{}
+	for _, role := range context.Roles {
+		roles = append(roles, role)
 	}
-	return res.primaryField
-}
-
-// PrimaryDBName return db column name of the resource's primary field
-func (res *Resource) PrimaryDBName() (name string) {
-	field := res.PrimaryField()
-	if field != nil {
-		name = field.DBName
-	}
-	return
-}
-
-// PrimaryFieldName return struct column name of the resource's primary field
-func (res *Resource) PrimaryFieldName() (name string) {
-	field := res.PrimaryField()
-	if field != nil {
-		name = field.Name
-	}
-	return
+	return res.Permission.HasPermission(mode, roles...)
 }

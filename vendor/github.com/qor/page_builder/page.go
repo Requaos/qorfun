@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"

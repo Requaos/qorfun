@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/qor/resource"
 	"github.com/qor/roles"
@@ -56,9 +55,9 @@ func (sm *StateMachine) Initial(name string) *StateMachine {
 
 // State define a state
 func (sm *StateMachine) State(name string) *State {
-	event := &State{Name: name}
-	sm.states[name] = event
-	return event
+	state := &State{Name: name}
+	sm.states[name] = state
+	return state
 }
 
 // Event define an event
@@ -219,8 +218,24 @@ func (transition *EventTransition) After(fc func(value interface{}, tx *gorm.DB)
 // ConfigureQorResource used to configure transition for qor admin
 func (transition *Transition) ConfigureQorResource(res resource.Resourcer) {
 	if res, ok := res.(*admin.Resource); ok {
-		if res.GetMeta("State") == nil {
-			res.Meta(&admin.Meta{Name: "State", Permission: roles.Deny(roles.Update, roles.Anyone)})
+		if meta := res.GetMeta("State"); meta.Permission == nil {
+			meta.Permission = roles.Deny(roles.Update, roles.Anyone).Deny(roles.Create, roles.Anyone)
 		}
+
+		res.OverrideIndexAttrs(func() {
+			res.IndexAttrs(res.IndexAttrs(), "-StateChangeLogs")
+		})
+
+		res.OverrideShowAttrs(func() {
+			res.ShowAttrs(res.ShowAttrs(), "-StateChangeLogs")
+		})
+
+		res.OverrideNewAttrs(func() {
+			res.NewAttrs(res.NewAttrs(), "-StateChangeLogs")
+		})
+
+		res.OverrideEditAttrs(func() {
+			res.EditAttrs(res.EditAttrs(), "-StateChangeLogs")
+		})
 	}
 }

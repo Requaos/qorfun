@@ -35,11 +35,11 @@ func ToArray(value interface{}) (values []string) {
 		}
 	case []interface{}:
 		for _, v := range value {
-			values = append(values, fmt.Sprintf("%v", v))
+			values = append(values, fmt.Sprint(v))
 		}
 	default:
 		if value := fmt.Sprint(value); value != "" {
-			values = []string{fmt.Sprintf("%v", value)}
+			values = []string{value}
 		}
 	}
 	return
@@ -48,15 +48,19 @@ func ToArray(value interface{}) (values []string) {
 // ToString get string from value, if passed value is a slice, will use the first element
 func ToString(value interface{}) string {
 	if v, ok := value.([]string); ok {
-		if len(v) > 0 {
-			return v[0]
+		for _, s := range v {
+			if s != "" {
+				return s
+			}
 		}
 		return ""
 	} else if v, ok := value.(string); ok {
 		return v
 	} else if v, ok := value.([]interface{}); ok {
-		if len(v) > 0 {
-			return fmt.Sprintf("%v", v[0])
+		for _, s := range v {
+			if fmt.Sprint(s) != "" {
+				return fmt.Sprint(s)
+			}
 		}
 		return ""
 	}

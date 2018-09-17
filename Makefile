@@ -1,4 +1,4 @@
-.PHONY: all build get generate binary test image release setup report
+.PHONY: all build generate binary test image release setup report
 
 REGISTRY_REPO = "requaos/qorfun"
 
@@ -52,13 +52,9 @@ GO_LINKER_FLAGS ?= --ldflags \
 
 all: build
 
-build: get generate binary
+build: generate binary
 
-get:
-	@echo "$(OK_COLOR)*** Running go get... ***"
-	$(GO) get -u ./...
-
-generate: get
+generate:
 	@echo "$(OK_COLOR)*** Running go generate... ***$(NO_COLOR)"
 	$(GO) generate $(GOFLAGS) ./...
 

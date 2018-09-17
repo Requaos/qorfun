@@ -1,45 +1,62 @@
 # SEO
 
-This SEO library allows for the management of and injection of dynamic data into HTML tags for the purpose of Search Engine Optimisation. Using the [QOR Admin](https://github.com/qor/admin) interface, an administrator can easily manage the content of an HTML page's title, description, and meta tags.
+The SEO library allows for the management and injection of dynamic data into HTML tags for the purpose of Search Engine Optimisation. Using the QOR Admin interface, an administrator can easily manage the content of an HTML page's title, description, and meta tags.
 
 [![GoDoc](https://godoc.org/github.com/qor/seo?status.svg)](https://godoc.org/github.com/qor/seo)
 
 ## Definition
 
-Define SEO settings struct with `Site-wide Settings` and `Page Related Settings`, for example:
-
 ```go
-type SEO struct {
-	gorm.Model
-	SiteName     string  // Site-wide Settings
-	SiteHost     string  // Site-wide Settings
-  HomePage     seo.Setting
-  ProductPage  seo.Setting `seo:"ProductName,ProductCode"` // Page Related Variables [ProductName, ProductCode]
-  CategoryPage seo.Setting `seo:"CategoryName"` // Page Related Variables [CategoryName]
+// The `QorSeoSetting` struct is a normal GORM-backend model, need to run migration before using it
+db.AutoMigrate(&seo.QorSeoSetting{})
+
+// SeoGlobalSetting used to generate `Site-wide Settings` part
+type SeoGlobalSetting struct {
+    SiteName string
 }
 
-// The `SEO` struct is a normal GORM-backend model, need to run migration before using it
-db.AutoMigrate(&SEO{})
+SeoCollection = seo.New()
 
-// Add `SEO` to QOR Admin Interface
-Admin.AddResource(&SEO{})
+// Configure `Site-wide Settings`
+SeoCollection.RegisterGlobalVaribles(&SeoGlobalSetting{SiteName: "ASICS"})
+
+// Configure SEO storage model, you could customize it by embed seo.QorSeoSetting to your custom model
+SeoCollection.SettingResource = Admin.AddResource(&seo.QorSeoSetting{}, &admin.Config{Name: "SEO", Invisible: true})
+
+// Configure `Page Metadata Defaults`
+SeoCollection.RegisterSeo(&seo.SEO{
+    Name:     "Default Page",
+})
+
+SeoCollection.RegisterSeo(&seo.SEO{
+    Name:     "Category Page",
+    // Defined what Varibles could be using in title, description and keywords
+    Varibles: []string{"CategoryName"},
+    // Generated a mapping to replace the Variable, e.g. title: 'Qor - {{CategoryName}}', will be dislayed as 'Qor - Clothing'
+    Context: func(objects ...interface{}) map[string]string {
+        values := make(map[string]string)
+        if len(objects) > 0 {
+            category := objects[0].(Category)
+            values["CategoryName"] = category.Name
+        }
+        return values
+    },
+})
 ```
-
-[Online SEO Setting Demo For Qor Example](http://demo.getqor.com/admin/seo_setting)
 
 ## Usage
 
 ```go
-var SEOSetting SEO
-db.First(&SEOSetting)
+qorContext := &qor.Context{DB: db}
 
-// render home page's meta tags
-SEOSetting.HomePage.Render(SEOSetting)
+// render default meta tags
+SeoCollection.Render(qorContext, "Default Page")
 
-// render product page's meta tags
-var product Product
-db.First(&product, "code = ?", "L1212")
-SEOSetting.ProductPage.Render(SEOSetting, product)
+// render cateogry pages' meta tags
+var category Category
+db.First(&category, "code = ?", "clothing")
+SeoCollection.Render(qorContext, "Category Page", category)
+
 ```
 
 ## Structured Data

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/media"
 	"github.com/qor/media/oss"

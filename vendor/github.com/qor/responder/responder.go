@@ -4,18 +4,16 @@
 package responder
 
 import (
+	"mime"
 	"net/http"
 	"path/filepath"
 	"strings"
 )
 
-// registered mime types
-var mimeTypes = map[string]string{}
-
-// Register new mime type and format
+// Register mime type and format
 //     responder.Register("application/json", "json")
-func Register(mime string, format string) {
-	mimeTypes[mime] = format
+func Register(mimeType string, format string) {
+	mime.AddExtensionType("."+strings.TrimPrefix(format, "."), mimeType)
 }
 
 func init() {
@@ -30,7 +28,8 @@ func init() {
 
 // Responder is holder of registed response handlers, response `Request` based on its accepted mime type
 type Responder struct {
-	responds map[string]func()
+	responds         map[string]func()
+	DefaultResponder func()
 }
 
 // With could be used to register response handler for mime type formats, the formats could be string or []string
@@ -53,6 +52,10 @@ func (rep *Responder) With(formats interface{}, fc func()) *Responder {
 			rep.responds[f] = fc
 		}
 	}
+
+	if rep.DefaultResponder == nil {
+		rep.DefaultResponder = fc
+	}
 	return rep
 }
 
@@ -68,18 +71,19 @@ func (rep *Responder) Respond(request *http.Request) {
 
 	// get request format from Accept
 	for _, accept := range strings.Split(request.Header.Get("Accept"), ",") {
-		if format, ok := mimeTypes[accept]; ok {
-			if respond, ok := rep.responds[format]; ok {
-				respond()
-				return
+		if exts, err := mime.ExtensionsByType(accept); err == nil {
+			for _, ext := range exts {
+				if respond, ok := rep.responds[strings.TrimPrefix(ext, ".")]; ok {
+					respond()
+					return
+				}
 			}
 		}
 	}
 
 	// use first format as default
-	for _, respond := range rep.responds {
-		respond()
-		break
+	if rep.DefaultResponder != nil {
+		rep.DefaultResponder()
 	}
 	return
 }

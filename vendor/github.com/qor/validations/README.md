@@ -1,10 +1,10 @@
 # Validations
 
-Validations provides a means to validate [GORM-backend](https://github.com/jinzhu/gorm) models when creating and updating them.
+Validations provides a means to [*validate*](https://en.wikipedia.org/wiki/Data_validation) [GORM](https://github.com/jinzhu/gorm) models when creating and updating them.
 
 ### Register GORM Callbacks
 
-Validations uses [GORM](https://github.com/jinzhu/gorm) callbacks to handle validations, so you will need to register callbacks first:
+Validations uses [GORM](https://github.com/jinzhu/gorm) callbacks to handle *validations*, so you will need to register callbacks first:
 
 ```go
 import (
@@ -54,15 +54,23 @@ func (user User) Validate(db *gorm.DB) {
 db.Create(&User{}).GetErrors() // => []error{"age need to be 18+", "name can't be blank"}
 ```
 
-## [Qor Support](https://github.com/qor/qor)
+## [Govalidator](https://github.com/asaskevich/govalidator) integration
 
-[QOR](http://getqor.com) is architected from the ground up to accelerate development and deployment of Content Management Systems, E-commerce Systems, and Business Applications and as such is comprised of modules that abstract common features for such systems.
+Qor [Validations](https://github.com/qor/validations) supports [govalidator](https://github.com/asaskevich/govalidator), so you could add a tag into your struct for some common *validations*, such as *check required*, *numeric*, *length*, etc.
 
-Validations could be used alone, but it works very nicely with QOR (as a QOR Plugin) - if you have requirements to manage your application's data be sure to check QOR out!
+```
+type User struct {
+  gorm.Model
+  Name           string `valid:"required"`
+  Password       string `valid:"length(6|20)"`
+  SecurePassword string `valid:"numeric"`
+  Email          string `valid:"email"`
+}
+```
 
-[QOR Demo:  http://demo.getqor.com/admin](http://demo.getqor.com/admin)
+## Customize errors on form field
 
-If you want to display errors for each form field in QOR Admin, you could register your error like this:
+If you want to display errors for each form field in [QOR Admin](http://github.com/qor/admin), you could register your error like this:
 
 ```go
 func (user User) Validate(db *gorm.DB) {
@@ -72,7 +80,9 @@ func (user User) Validate(db *gorm.DB) {
 }
 ```
 
-Checkout [http://demo.getqor.com/admin/products/1](http://demo.getqor.com/admin/products/1) as demo, change `Name` to be a blank string and save to see what happens.
+## Try it out for yourself
+
+Checkout the [http://demo.getqor.com/admin/products/1](http://demo.getqor.com/admin/products/1) demo, change `Name` to be a blank string and save to see what happens.
 
 ## License
 

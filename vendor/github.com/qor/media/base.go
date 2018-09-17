@@ -20,7 +20,6 @@ import (
 	"github.com/gosimple/slug"
 	"github.com/jinzhu/gorm"
 	"github.com/jinzhu/inflection"
-
 	"github.com/qor/admin"
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"

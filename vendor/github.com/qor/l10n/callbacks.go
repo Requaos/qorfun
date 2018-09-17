@@ -5,17 +5,16 @@ import (
 	"reflect"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/qor/utils"
 )
 
 func beforeQuery(scope *gorm.Scope) {
-	if isLocalizable(scope) {
+	if IsLocalizable(scope) {
 		quotedTableName := scope.QuotedTableName()
 		quotedPrimaryKey := scope.Quote(scope.PrimaryKey())
 		_, hasDeletedAtColumn := scope.FieldByName("deleted_at")
 
-		locale, isLocale := getLocale(scope)
+		locale, isLocale := getQueryLocale(scope)
 		switch mode, _ := scope.DB().Get("l10n:mode"); mode {
 		case "unscoped":
 		case "global":
@@ -24,17 +23,21 @@ func beforeQuery(scope *gorm.Scope) {
 			scope.Search.Where(fmt.Sprintf("%v.language_code = ?", quotedTableName), locale)
 		case "reverse":
 			if !scope.Search.Unscoped && hasDeletedAtColumn {
-				scope.Search.Where(fmt.Sprintf("(%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ? AND t2.deleted_at IS NULL) AND language_code = ?)", quotedPrimaryKey, quotedPrimaryKey, quotedTableName), locale, Global)
+				scope.Search.Where(fmt.Sprintf(
+					"(%v.%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ? AND t2.deleted_at IS NULL) AND %v.language_code = ?)", quotedTableName, quotedPrimaryKey, quotedPrimaryKey, quotedTableName, quotedTableName), locale, Global)
 			} else {
-				scope.Search.Where(fmt.Sprintf("(%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ?) AND language_code = ?)", quotedPrimaryKey, quotedPrimaryKey, quotedTableName), locale, Global)
+				scope.Search.Where(fmt.Sprintf("(%v.%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ?) AND %v.language_code = ?)", quotedTableName, quotedPrimaryKey, quotedPrimaryKey, quotedTableName, quotedTableName), locale, Global)
 			}
+		case "fallback":
+			fallthrough
 		default:
 			if isLocale {
 				if !scope.Search.Unscoped && hasDeletedAtColumn {
-					scope.Search.Where(fmt.Sprintf("((%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ? AND t2.deleted_at IS NULL) AND language_code = ?) OR language_code = ?) AND deleted_at IS NULL", quotedPrimaryKey, quotedPrimaryKey, quotedTableName), locale, Global, locale)
+					scope.Search.Where(fmt.Sprintf("((%v.%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ? AND t2.deleted_at IS NULL) AND %v.language_code = ?) OR %v.language_code = ?) AND %v.deleted_at IS NULL", quotedTableName, quotedPrimaryKey, quotedPrimaryKey, quotedTableName, quotedTableName, quotedTableName, quotedTableName), locale, Global, locale)
 				} else {
-					scope.Search.Where(fmt.Sprintf("(%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ?) AND language_code = ?) OR (language_code = ?)", quotedPrimaryKey, quotedPrimaryKey, quotedTableName), locale, Global, locale)
+					scope.Search.Where(fmt.Sprintf("(%v.%v NOT IN (SELECT DISTINCT(%v) FROM %v t2 WHERE t2.language_code = ?) AND %v.language_code = ?) OR (%v.language_code = ?)", quotedTableName, quotedPrimaryKey, quotedPrimaryKey, quotedTableName, quotedTableName, quotedTableName), locale, Global, locale)
 				}
+				scope.Search.Order(gorm.Expr(fmt.Sprintf("%v.language_code = ? DESC", quotedTableName), locale))
 			} else {
 				scope.Search.Where(fmt.Sprintf("%v.language_code = ?", quotedTableName), Global)
 			}
@@ -43,7 +46,7 @@ func beforeQuery(scope *gorm.Scope) {
 }
 
 func beforeCreate(scope *gorm.Scope) {
-	if isLocalizable(scope) {
+	if IsLocalizable(scope) {
 		if locale, ok := getLocale(scope); ok { // is locale
 			if isLocaleCreatable(scope) || !scope.PrimaryKeyZero() {
 				setLocale(scope, locale)
@@ -58,13 +61,13 @@ func beforeCreate(scope *gorm.Scope) {
 }
 
 func beforeUpdate(scope *gorm.Scope) {
-	if isLocalizable(scope) {
+	if IsLocalizable(scope) {
 		locale, isLocale := getLocale(scope)
 
 		switch mode, _ := scope.DB().Get("l10n:mode"); mode {
 		case "unscoped":
 		default:
-			scope.Search.Where("language_code = ?", locale)
+			scope.Search.Where(fmt.Sprintf("%v.language_code = ?", scope.QuotedTableName()), locale)
 			setLocale(scope, locale)
 		}
 
@@ -76,7 +79,7 @@ func beforeUpdate(scope *gorm.Scope) {
 
 func afterUpdate(scope *gorm.Scope) {
 	if !scope.HasError() {
-		if isLocalizable(scope) {
+		if IsLocalizable(scope) {
 			if locale, ok := getLocale(scope); ok {
 				if scope.DB().RowsAffected == 0 && !scope.PrimaryKeyZero() { //is locale and nothing updated
 					var count int
@@ -89,7 +92,7 @@ func afterUpdate(scope *gorm.Scope) {
 
 					// if no localized records exist, localize it
 					if scope.NewDB().Table(scope.TableName()).Where(query, locale, scope.PrimaryKeyValue()).Count(&count); count == 0 {
-						scope.DB().Create(scope.Value)
+						scope.DB().RowsAffected = scope.DB().Create(scope.Value).RowsAffected
 					}
 				}
 			} else if syncColumns := syncColumns(scope); len(syncColumns) > 0 { // is global
@@ -130,8 +133,8 @@ func afterUpdate(scope *gorm.Scope) {
 }
 
 func beforeDelete(scope *gorm.Scope) {
-	if isLocalizable(scope) {
-		if locale, ok := getLocale(scope); ok { // is locale
+	if IsLocalizable(scope) {
+		if locale, ok := getQueryLocale(scope); ok { // is locale
 			scope.Search.Where(fmt.Sprintf("%v.language_code = ?", scope.QuotedTableName()), locale)
 		}
 	}
@@ -141,13 +144,25 @@ func beforeDelete(scope *gorm.Scope) {
 func RegisterCallbacks(db *gorm.DB) {
 	callback := db.Callback()
 
-	callback.Create().Before("gorm:before_create").Register("l10n:before_create", beforeCreate)
+	if callback.Create().Get("l10n:before_create") == nil {
+		callback.Create().Before("gorm:before_create").Register("l10n:before_create", beforeCreate)
+	}
 
-	callback.Update().Before("gorm:before_update").Register("l10n:before_update", beforeUpdate)
-	callback.Update().After("gorm:after_update").Register("l10n:after_update", afterUpdate)
+	if callback.Update().Get("l10n:before_update") == nil {
+		callback.Update().Before("gorm:before_update").Register("l10n:before_update", beforeUpdate)
+	}
+	if callback.Update().Get("l10n:after_update") == nil {
+		callback.Update().After("gorm:after_update").Register("l10n:after_update", afterUpdate)
+	}
 
-	callback.Delete().Before("gorm:before_delete").Register("l10n:before_delete", beforeDelete)
+	if callback.Delete().Get("l10n:before_delete") == nil {
+		callback.Delete().Before("gorm:before_delete").Register("l10n:before_delete", beforeDelete)
+	}
 
-	callback.RowQuery().Register("l10n:before_query", beforeQuery)
-	callback.Query().Before("gorm:query").Register("l10n:before_query", beforeQuery)
+	if callback.RowQuery().Get("l10n:before_query") == nil {
+		callback.RowQuery().Before("gorm:row_query").Register("l10n:before_query", beforeQuery)
+	}
+	if callback.Query().Get("l10n:before_query") == nil {
+		callback.Query().Before("gorm:query").Register("l10n:before_query", beforeQuery)
+	}
 }

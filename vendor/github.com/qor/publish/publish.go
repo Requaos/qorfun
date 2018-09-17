@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/qor/resource"
 	"github.com/qor/qor/utils"

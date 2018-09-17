@@ -2,28 +2,192 @@ package admin
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"html"
 	"html/template"
-	"os"
+	"math/rand"
+	"net/url"
 	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 
 	"github.com/jinzhu/gorm"
 	"github.com/jinzhu/inflection"
-	"github.com/microcosm-cc/bluemonday"
-
 	"github.com/qor/qor"
 	"github.com/qor/qor/utils"
 	"github.com/qor/roles"
+	"github.com/qor/session"
 )
 
-// NewResourceContext new resource context
+// FuncMap funcs map for current context
+func (context *Context) FuncMap() template.FuncMap {
+	funcMap := template.FuncMap{
+		"current_user":         func() qor.CurrentUser { return context.CurrentUser },
+		"get_resource":         context.Admin.GetResource,
+		"new_resource_context": context.NewResourceContext,
+		"is_new_record":        context.isNewRecord,
+		"is_equal":             context.isEqual,
+		"is_included":          context.isIncluded,
+		"primary_key_of":       context.primaryKeyOf,
+		"unique_key_of":        context.uniqueKeyOf,
+		"formatted_value_of":   context.FormattedValueOf,
+		"raw_value_of":         context.RawValueOf,
+
+		"t": context.t,
+		"flashes": func() []session.Message {
+			return context.Admin.SessionManager.Flashes(context.Writer, context.Request)
+		},
+		"pagination": context.Pagination,
+		"escape":     html.EscapeString,
+		"raw":        func(str string) template.HTML { return template.HTML(utils.HTMLSanitizer.Sanitize(str)) },
+		"unsafe_raw": func(str string) template.HTML { return template.HTML(str) },
+		"equal":      equal,
+		"stringify":  utils.Stringify,
+		"lower": func(value interface{}) string {
+			return strings.ToLower(fmt.Sprint(value))
+		},
+		"plural": func(value interface{}) string {
+			return inflection.Plural(fmt.Sprint(value))
+		},
+		"singular": func(value interface{}) string {
+			return inflection.Singular(fmt.Sprint(value))
+		},
+		"get_icon": func(m *menu) string {
+			if m.IconName != "" {
+				return m.IconName
+			}
+			return m.Name
+		},
+		"marshal": func(v interface{}) template.JS {
+			switch value := v.(type) {
+			case string:
+				return template.JS(value)
+			case template.HTML:
+				return template.JS(value)
+			default:
+				byt, _ := json.Marshal(v)
+				return template.JS(byt)
+			}
+		},
+
+		"to_map": func(values ...interface{}) map[string]interface{} {
+			results := map[string]interface{}{}
+			for i := 0; i < len(values)-1; i += 2 {
+				results[fmt.Sprint(values[i])] = values[i+1]
+			}
+			return results
+		},
+		"render":      context.Render,
+		"render_text": context.renderText,
+		"render_with": context.renderWith,
+		"render_form": context.renderForm,
+		"render_meta": func(value interface{}, meta *Meta, types ...string) template.HTML {
+			var (
+				result = bytes.NewBufferString("")
+				typ    = "index"
+			)
+
+			for _, t := range types {
+				typ = t
+			}
+
+			context.renderMeta(meta, value, []string{}, typ, result)
+			return template.HTML(result.String())
+		},
+		"render_filter": context.renderFilter,
+		"saved_filters": context.savedFilters,
+		"has_filter": func() bool {
+			query := context.Request.URL.Query()
+			for key := range query {
+				if regexp.MustCompile("filter[(\\w+)]").MatchString(key) && query.Get(key) != "" {
+					return true
+				}
+			}
+			return false
+		},
+		"page_title": context.pageTitle,
+		"meta_label": func(meta *Meta) template.HTML {
+			key := fmt.Sprintf("%v.attributes.%v", meta.baseResource.ToParam(), meta.Label)
+			return context.Admin.T(context.Context, key, meta.Label)
+		},
+		"meta_placeholder": func(meta *Meta, context *Context, placeholder string) template.HTML {
+			if getPlaceholder, ok := meta.Config.(interface {
+				GetPlaceholder(*Context) (template.HTML, bool)
+			}); ok {
+				if str, ok := getPlaceholder.GetPlaceholder(context); ok {
+					return str
+				}
+			}
+
+			key := fmt.Sprintf("%v.attributes.%v.placeholder", meta.baseResource.ToParam(), meta.Label)
+			return context.Admin.T(context.Context, key, placeholder)
+		},
+
+		"url_for":            context.URLFor,
+		"link_to":            context.linkTo,
+		"patch_current_url":  context.patchCurrentURL,
+		"patch_url":          context.patchURL,
+		"join_current_url":   context.joinCurrentURL,
+		"join_url":           context.joinURL,
+		"logout_url":         context.logoutURL,
+		"search_center_path": func() string { return path.Join(context.Admin.router.Prefix, "!search") },
+		"new_resource_path":  context.newResourcePath,
+		"defined_resource_show_page": func(res *Resource) bool {
+			if res != nil {
+				if r := context.Admin.GetResource(utils.ModelType(res.Value).String()); r != nil {
+					return r.sections.ConfiguredShowAttrs
+				}
+			}
+
+			return false
+		},
+
+		"get_menus":                 context.getMenus,
+		"get_scopes":                context.getScopes,
+		"get_filters":               context.getFilters,
+		"get_formatted_errors":      context.getFormattedErrors,
+		"load_actions":              context.loadActions,
+		"allowed_actions":           context.AllowedActions,
+		"is_sortable_meta":          context.isSortableMeta,
+		"index_sections":            context.indexSections,
+		"show_sections":             context.showSections,
+		"new_sections":              context.newSections,
+		"edit_sections":             context.editSections,
+		"convert_sections_to_metas": context.convertSectionToMetas,
+
+		"has_create_permission": context.hasCreatePermission,
+		"has_read_permission":   context.hasReadPermission,
+		"has_update_permission": context.hasUpdatePermission,
+		"has_delete_permission": context.hasDeletePermission,
+		"has_change_permission": context.hasChangePermission,
+
+		"qor_theme_class":        context.themesClass,
+		"javascript_tag":         context.javaScriptTag,
+		"stylesheet_tag":         context.styleSheetTag,
+		"load_theme_stylesheets": context.loadThemeStyleSheets,
+		"load_theme_javascripts": context.loadThemeJavaScripts,
+		"load_admin_stylesheets": context.loadAdminStyleSheets,
+		"load_admin_javascripts": context.loadAdminJavaScripts,
+	}
+
+	for key, value := range context.Admin.funcMaps {
+		funcMap[key] = value
+	}
+
+	for key, value := range context.funcMaps {
+		funcMap[key] = value
+	}
+
+	return funcMap
+}
+
+// NewResourceContext new context with resource
 func (context *Context) NewResourceContext(name ...interface{}) *Context {
 	clone := &Context{Context: context.Context.Clone(), Admin: context.Admin, Result: context.Result, Action: context.Action}
 	if len(name) > 0 {
@@ -38,18 +202,6 @@ func (context *Context) NewResourceContext(name ...interface{}) *Context {
 	return clone
 }
 
-func (context *Context) primaryKeyOf(value interface{}) interface{} {
-	return context.GetDB().NewScope(value).PrimaryKeyValue()
-}
-
-func (context *Context) isNewRecord(value interface{}) bool {
-	return context.GetDB().NewRecord(value)
-}
-
-func (context *Context) newResourcePath(res *Resource) string {
-	return path.Join(context.URLFor(res), "new")
-}
-
 // URLFor generate url for resource value
 //     context.URLFor(&Product{})
 //     context.URLFor(&Product{ID: 111})
@@ -57,9 +209,9 @@ func (context *Context) newResourcePath(res *Resource) string {
 func (context *Context) URLFor(value interface{}, resources ...*Resource) string {
 	getPrefix := func(res *Resource) string {
 		var params string
-		for res.base != nil {
-			params = path.Join(res.base.ToParam(), res.base.GetPrimaryValue(context.Request), params)
-			res = res.base
+		for res.ParentResource != nil {
+			params = path.Join(res.ParentResource.ToParam(), res.ParentResource.GetPrimaryValue(context.Request), params)
+			res = res.ParentResource
 		}
 		return path.Join(res.GetAdmin().router.Prefix, params)
 	}
@@ -84,11 +236,177 @@ func (context *Context) URLFor(value interface{}, resources ...*Resource) string
 				return path.Join(getPrefix(res), res.ToParam())
 			}
 
-			primaryKey := fmt.Sprint(context.GetDB().NewScope(value).PrimaryKeyValue())
-			return path.Join(getPrefix(res), res.ToParam(), primaryKey)
+			var (
+				scope         = context.GetDB().NewScope(value)
+				primaryFields []string
+				primaryValues = map[string]string{}
+			)
+
+			for _, primaryField := range res.PrimaryFields {
+				if field, ok := scope.FieldByName(primaryField.Name); ok {
+					primaryFields = append(primaryFields, fmt.Sprint(field.Field.Interface())) // TODO improve me
+				}
+			}
+
+			for _, field := range scope.PrimaryFields() {
+				useAsPrimaryField := false
+				for _, primaryField := range res.PrimaryFields {
+					if field.DBName == primaryField.DBName {
+						useAsPrimaryField = true
+						break
+					}
+				}
+
+				if !useAsPrimaryField {
+					primaryValues[fmt.Sprintf("primary_key[%v_%v]", scope.TableName(), field.DBName)] = fmt.Sprint(reflect.Indirect(field.Field).Interface())
+				}
+			}
+
+			urlPath := path.Join(getPrefix(res), res.ToParam(), strings.Join(primaryFields, ","))
+
+			if len(primaryValues) > 0 {
+				var primaryValueParams []string
+				for key, value := range primaryValues {
+					primaryValueParams = append(primaryValueParams, fmt.Sprintf("%v=%v", key, url.QueryEscape(value)))
+				}
+				urlPath = urlPath + "?" + strings.Join(primaryValueParams, "&")
+			}
+			return urlPath
 		}
 	}
 	return ""
+}
+
+// RawValueOf return raw value of a meta for current resource
+func (context *Context) RawValueOf(value interface{}, meta *Meta) interface{} {
+	return context.valueOf(meta.GetValuer(), value, meta)
+}
+
+// FormattedValueOf return formatted value of a meta for current resource
+func (context *Context) FormattedValueOf(value interface{}, meta *Meta) interface{} {
+	result := context.valueOf(meta.GetFormattedValuer(), value, meta)
+	if resultValuer, ok := result.(driver.Valuer); ok {
+		if result, err := resultValuer.Value(); err == nil {
+			return result
+		}
+	}
+
+	return result
+}
+
+var visiblePageCount = 8
+
+// Page contain pagination information
+type Page struct {
+	Page       int
+	Current    bool
+	IsPrevious bool
+	IsNext     bool
+	IsFirst    bool
+	IsLast     bool
+}
+
+// PaginationResult pagination result struct
+type PaginationResult struct {
+	Pagination Pagination
+	Pages      []Page
+}
+
+// Pagination return pagination information
+// Keep visiblePageCount's pages visible, exclude prev and next link
+// Assume there are 12 pages in total.
+// When current page is 1
+// [current, 2, 3, 4, 5, 6, 7, 8, next]
+// When current page is 6
+// [prev, 2, 3, 4, 5, current, 7, 8, 9, 10, next]
+// When current page is 10
+// [prev, 5, 6, 7, 8, 9, current, 11, 12]
+// If total page count less than VISIBLE_PAGE_COUNT, always show all pages
+func (context *Context) Pagination() *PaginationResult {
+	var (
+		pages      []Page
+		pagination = context.Searcher.Pagination
+		pageCount  = pagination.PerPage
+	)
+
+	if pageCount == 0 {
+		if context.Resource != nil && context.Resource.Config.PageCount != 0 {
+			pageCount = context.Resource.Config.PageCount
+		} else {
+			pageCount = PaginationPageCount
+		}
+	}
+
+	if pagination.Total <= pageCount && pagination.CurrentPage <= 1 {
+		return nil
+	}
+
+	start := pagination.CurrentPage - visiblePageCount/2
+	if start < 1 {
+		start = 1
+	}
+
+	end := start + visiblePageCount - 1 // -1 for "start page" itself
+	if end > pagination.Pages {
+		end = pagination.Pages
+	}
+
+	if (end-start) < visiblePageCount && start != 1 {
+		start = end - visiblePageCount + 1
+	}
+	if start < 1 {
+		start = 1
+	}
+
+	// Append prev link
+	if start > 1 {
+		pages = append(pages, Page{Page: 1, IsFirst: true})
+		pages = append(pages, Page{Page: pagination.CurrentPage - 1, IsPrevious: true})
+	}
+
+	for i := start; i <= end; i++ {
+		pages = append(pages, Page{Page: i, Current: pagination.CurrentPage == i})
+	}
+
+	// Append next link
+	if end < pagination.Pages {
+		pages = append(pages, Page{Page: pagination.CurrentPage + 1, IsNext: true})
+		pages = append(pages, Page{Page: pagination.Pages, IsLast: true})
+	}
+
+	return &PaginationResult{Pagination: pagination, Pages: pages}
+}
+
+func (context *Context) primaryKeyOf(value interface{}) interface{} {
+	if reflect.Indirect(reflect.ValueOf(value)).Kind() == reflect.Struct {
+		scope := &gorm.Scope{Value: value}
+		return fmt.Sprint(scope.PrimaryKeyValue())
+	}
+	return fmt.Sprint(value)
+}
+
+func (context *Context) uniqueKeyOf(value interface{}) interface{} {
+	if reflect.Indirect(reflect.ValueOf(value)).Kind() == reflect.Struct {
+		scope := &gorm.Scope{Value: value}
+		var primaryValues []string
+		for _, primaryField := range scope.PrimaryFields() {
+			primaryValues = append(primaryValues, fmt.Sprint(primaryField.Field.Interface()))
+		}
+		primaryValues = append(primaryValues, fmt.Sprint(rand.Intn(1000)))
+		return utils.ToParamString(url.QueryEscape(strings.Join(primaryValues, "_")))
+	}
+	return fmt.Sprint(value)
+}
+
+func (context *Context) isNewRecord(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	return context.GetDB().NewRecord(value)
+}
+
+func (context *Context) newResourcePath(res *Resource) string {
+	return path.Join(context.URLFor(res), "new")
 }
 
 func (context *Context) linkTo(text interface{}, link interface{}) template.HTML {
@@ -103,6 +421,9 @@ func (context *Context) valueOf(valuer func(interface{}, *qor.Context) interface
 	if valuer != nil {
 		reflectValue := reflect.ValueOf(value)
 		if reflectValue.Kind() != reflect.Ptr {
+			if !reflectValue.IsValid() {
+				return nil
+			}
 			reflectPtr := reflect.New(reflectValue.Type())
 			reflectPtr.Elem().Set(reflectValue)
 			value = reflectPtr.Interface()
@@ -133,16 +454,6 @@ func (context *Context) valueOf(valuer func(interface{}, *qor.Context) interface
 	return nil
 }
 
-// RawValueOf return raw value of a meta for current resource
-func (context *Context) RawValueOf(value interface{}, meta *Meta) interface{} {
-	return context.valueOf(meta.GetValuer(), value, meta)
-}
-
-// FormattedValueOf return formatted value of a meta for current resource
-func (context *Context) FormattedValueOf(value interface{}, meta *Meta) interface{} {
-	return context.valueOf(meta.GetFormattedValuer(), value, meta)
-}
-
 func (context *Context) renderForm(value interface{}, sections []*Section) template.HTML {
 	var result = bytes.NewBufferString("")
 	context.renderSections(value, sections, []string{"QorResource"}, result, "form")
@@ -159,7 +470,7 @@ func (context *Context) renderSections(value interface{}, sections []*Section, p
 		for _, column := range section.Rows {
 			columnsHTML := bytes.NewBufferString("")
 			for _, col := range column {
-				meta := section.Resource.GetMetaOrNew(col)
+				meta := section.Resource.GetMeta(col)
 				if meta != nil {
 					context.renderMeta(meta, value, prefix, kind, columnsHTML)
 				}
@@ -174,39 +485,83 @@ func (context *Context) renderSections(value interface{}, sections []*Section, p
 			})
 		}
 
-		var data = map[string]interface{}{
-			"Title": template.HTML(section.Title),
-			"Rows":  rows,
-		}
-		if file, err := context.FindTemplate("metas/section.tmpl"); err == nil {
-			if tmpl, err := template.New(filepath.Base(file)).Funcs(context.FuncMap()).ParseFiles(file); err == nil {
-				tmpl.Execute(writer, data)
+		if len(rows) > 0 {
+			var data = map[string]interface{}{
+				"Section": section,
+				"Title":   template.HTML(section.Title),
+				"Rows":    rows,
+			}
+			if content, err := context.Asset("metas/section.tmpl"); err == nil {
+				if tmpl, err := template.New("section").Funcs(context.FuncMap()).Parse(string(content)); err == nil {
+					tmpl.Execute(writer, data)
+				}
 			}
 		}
 	}
 }
 
+func (context *Context) renderFilter(filter *Filter) template.HTML {
+	var (
+		err     error
+		content []byte
+		result  = bytes.NewBufferString("")
+	)
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println(r)
+			debug.PrintStack()
+			result.WriteString(fmt.Sprintf("Get error when render template for filter %v (%v): %v", filter.Name, filter.Type, r))
+		}
+	}()
+
+	if content, err = context.Asset(fmt.Sprintf("metas/filter/%v.tmpl", filter.Type)); err == nil {
+		tmpl := template.New(filter.Type + ".tmpl").Funcs(context.FuncMap())
+		if tmpl, err = tmpl.Parse(string(content)); err == nil {
+			var data = map[string]interface{}{
+				"Filter":          filter,
+				"Label":           filter.Label,
+				"InputNamePrefix": fmt.Sprintf("filters[%v]", filter.Name),
+				"Context":         context,
+				"Resource":        context.Resource,
+			}
+
+			err = tmpl.Execute(result, data)
+		}
+	}
+
+	if err != nil {
+		result.WriteString(fmt.Sprintf("got error when render filter template for %v(%v):%v", filter.Name, filter.Type, err))
+	}
+
+	return template.HTML(result.String())
+}
+
+func (context *Context) savedFilters() (filters []SavedFilter) {
+	context.Admin.SettingsStorage.Get("saved_filters", &filters, context)
+	return
+}
+
 func (context *Context) renderMeta(meta *Meta, value interface{}, prefix []string, metaType string, writer *bytes.Buffer) {
 	var (
-		tmpl     *template.Template
 		err      error
 		funcsMap = context.FuncMap()
 	)
 	prefix = append(prefix, meta.Name)
 
-	var generateNestedRenderSections = func(kind string) func(interface{}, []*Section, ...int) template.HTML {
-		return func(value interface{}, sections []*Section, index ...int) template.HTML {
+	var generateNestedRenderSections = func(kind string) func(interface{}, []*Section, int) template.HTML {
+		return func(value interface{}, sections []*Section, index int) template.HTML {
 			var result = bytes.NewBufferString("")
 			var newPrefix = append([]string{}, prefix...)
 
-			if len(index) > 0 {
+			if index >= 0 {
 				last := newPrefix[len(newPrefix)-1]
-				newPrefix = append(newPrefix[:len(newPrefix)-1], fmt.Sprintf("%v[%v]", last, index[0]))
+				newPrefix = append(newPrefix[:len(newPrefix)-1], fmt.Sprintf("%v[%v]", last, index))
 			}
 
 			if len(sections) > 0 {
 				for _, field := range context.GetDB().NewScope(value).PrimaryFields() {
-					if meta := sections[0].Resource.GetMetaOrNew(field.Name); meta != nil {
+					if meta := sections[0].Resource.GetMeta(field.Name); meta != nil {
 						context.renderMeta(meta, value, newPrefix, kind, result)
 					}
 				}
@@ -218,18 +573,45 @@ func (context *Context) renderMeta(meta *Meta, value interface{}, prefix []strin
 		}
 	}
 
-	funcsMap["render_form"] = generateNestedRenderSections("form")
+	funcsMap["has_change_permission"] = func(permissioner HasPermissioner) bool {
+		if context.GetDB().NewScope(value).PrimaryKeyZero() {
+			return context.hasCreatePermission(permissioner)
+		}
+		return context.hasUpdatePermission(permissioner)
+	}
+	funcsMap["render_nested_form"] = generateNestedRenderSections("form")
 
-	if file, err := context.FindTemplate(fmt.Sprintf("metas/%v/%v.tmpl", metaType, meta.Name), fmt.Sprintf("metas/%v/%v.tmpl", metaType, meta.Type)); err == nil {
-		defer func() {
-			if r := recover(); r != nil {
-				writer.Write([]byte(fmt.Sprintf("Get error when render template %v meta %v: %v", file, meta.Name, r)))
+	defer func() {
+		if r := recover(); r != nil {
+			debug.PrintStack()
+			writer.WriteString(fmt.Sprintf("Get error when render template for meta %v (%v): %v", meta.Name, meta.Type, r))
+		}
+	}()
+
+	var (
+		tmpl    = template.New(meta.Type + ".tmpl").Funcs(funcsMap)
+		content []byte
+	)
+
+	switch {
+	case meta.Config != nil:
+		if templater, ok := meta.Config.(interface {
+			GetTemplate(context *Context, metaType string) ([]byte, error)
+		}); ok {
+			if content, err = templater.GetTemplate(context, metaType); err == nil {
+				tmpl, err = tmpl.Parse(string(content))
+				break
 			}
-		}()
-
-		tmpl, err = template.New(filepath.Base(file)).Funcs(funcsMap).ParseFiles(file)
-	} else {
-		tmpl, err = template.New(meta.Type + ".tmpl").Funcs(funcsMap).Parse("{{.Value}}")
+		}
+		fallthrough
+	default:
+		if content, err = context.Asset(fmt.Sprintf("%v/metas/%v/%v.tmpl", meta.baseResource.ToParam(), metaType, meta.Name), fmt.Sprintf("metas/%v/%v.tmpl", metaType, meta.Type)); err == nil {
+			tmpl, err = tmpl.Parse(string(content))
+		} else if metaType == "index" {
+			tmpl, err = tmpl.Parse("{{.Value}}")
+		} else {
+			err = fmt.Errorf("haven't found %v template for meta %v", metaType, meta.Name)
+		}
 	}
 
 	if err == nil {
@@ -241,27 +623,69 @@ func (context *Context) renderMeta(meta *Meta, value interface{}, prefix []strin
 			"ResourceValue": value,
 			"Value":         context.FormattedValueOf(value, meta),
 			"Label":         meta.Label,
-			"InputId":       fmt.Sprintf("%v_%v_%v", scope.GetModelStruct().ModelType.Name(), scope.PrimaryKeyValue(), meta.Name),
 			"InputName":     strings.Join(prefix, "."),
 		}
 
-		if meta.GetCollection != nil {
-			data["CollectionValue"] = func() [][]string {
-				return meta.GetCollection(value, context.Context)
-			}
+		if !scope.PrimaryKeyZero() {
+			data["InputId"] = utils.ToParamString(fmt.Sprintf("%v_%v_%v", scope.GetModelStruct().ModelType.Name(), scope.PrimaryKeyValue(), meta.Name))
+		}
+
+		data["CollectionValue"] = func() [][]string {
+			fmt.Printf("%v: Call .CollectionValue from views already Deprecated, get the value with `.Meta.Config.GetCollection .ResourceValue .Context`", meta.Name)
+			return meta.Config.(interface {
+				GetCollection(value interface{}, context *Context) [][]string
+			}).GetCollection(value, context)
 		}
 
 		err = tmpl.Execute(writer, data)
 	}
 
 	if err != nil {
-		utils.ExitWithMsg(fmt.Sprintf("got error when render %v template for %v(%v):%v", metaType, meta.Name, meta.Type, err))
+		msg := fmt.Sprintf("got error when render %v template for %v(%v): %v", metaType, meta.Name, meta.Type, err)
+		fmt.Fprint(writer, msg)
+		utils.ExitWithMsg(msg)
+	}
+}
+
+func (context *Context) isEqual(value interface{}, hasValue interface{}) bool {
+	var result string
+
+	if (value == nil || hasValue == nil) && (value != hasValue) {
+		return false
+	}
+
+	if reflect.Indirect(reflect.ValueOf(hasValue)).Kind() == reflect.Struct {
+		scope := &gorm.Scope{Value: hasValue}
+		result = fmt.Sprint(scope.PrimaryKeyValue())
+	} else {
+		result = fmt.Sprint(hasValue)
+	}
+
+	reflectValue := reflect.Indirect(reflect.ValueOf(value))
+	if reflectValue.Kind() == reflect.Struct {
+		scope := &gorm.Scope{Value: value}
+		return fmt.Sprint(scope.PrimaryKeyValue()) == result
+	} else if reflectValue.Kind() == reflect.String {
+		// type UserType string, alias type will panic if do
+		// return reflectValue.Interface().(string) == result
+		return fmt.Sprint(reflectValue.Interface()) == result
+	} else {
+		return fmt.Sprint(reflectValue.Interface()) == result
 	}
 }
 
 func (context *Context) isIncluded(value interface{}, hasValue interface{}) bool {
+	var result string
+	if reflect.Indirect(reflect.ValueOf(hasValue)).Kind() == reflect.Struct {
+		scope := &gorm.Scope{Value: hasValue}
+		result = fmt.Sprint(scope.PrimaryKeyValue())
+	} else {
+		result = fmt.Sprint(hasValue)
+	}
+
 	primaryKeys := []interface{}{}
 	reflectValue := reflect.Indirect(reflect.ValueOf(value))
+
 	if reflectValue.Kind() == reflect.Slice {
 		for i := 0; i < reflectValue.Len(); i++ {
 			if value := reflectValue.Index(i); value.IsValid() {
@@ -277,13 +701,13 @@ func (context *Context) isIncluded(value interface{}, hasValue interface{}) bool
 		scope := &gorm.Scope{Value: value}
 		primaryKeys = append(primaryKeys, scope.PrimaryKeyValue())
 	} else if reflectValue.Kind() == reflect.String {
-		return strings.Contains(reflectValue.Interface().(string), fmt.Sprintf("%v", hasValue))
+		return strings.Contains(reflectValue.Interface().(string), result)
 	} else if reflectValue.IsValid() {
 		primaryKeys = append(primaryKeys, reflect.Indirect(reflectValue).Interface())
 	}
 
 	for _, key := range primaryKeys {
-		if fmt.Sprintf("%v", hasValue) == fmt.Sprintf("%v", key) {
+		if fmt.Sprint(key) == result {
 			return true
 		}
 	}
@@ -333,15 +757,18 @@ func (context *Context) getMenus() (menus []*menu) {
 
 	addMenu = func(parent *menu, menus []*Menu) {
 		for _, m := range menus {
+			url := m.URL()
 			if m.HasPermission(roles.Read, context.Context) {
 				var menu = &menu{Menu: m}
-				if strings.HasPrefix(context.Request.URL.Path, m.Link) && len(m.Link) > mostMatchedLength {
+				if strings.HasPrefix(context.Request.URL.Path, url) && len(url) > mostMatchedLength {
 					mostMatchedMenu = menu
-					mostMatchedLength = len(m.Link)
+					mostMatchedLength = len(url)
 				}
 
 				addMenu(menu, menu.GetSubMenus())
-				parent.SubMenus = append(parent.SubMenus, menu)
+				if len(menu.SubMenus) > 0 || menu.URL() != "" {
+					parent.SubMenus = append(parent.SubMenus, menu)
+				}
 			}
 		}
 	}
@@ -362,46 +789,77 @@ type scope struct {
 
 type scopeMenu struct {
 	Group  string
-	Scopes []scope
+	Scopes []*scope
 }
 
-// GetScopes get scopes from current context
-func (context *Context) GetScopes() (menus []*scopeMenu) {
+// getScopes get scopes from current context
+func (context *Context) getScopes() (menus []*scopeMenu) {
 	if context.Resource == nil {
 		return
 	}
 
-	scopes := context.Request.URL.Query()["scopes"]
+	activatedScopeNames := context.Request.URL.Query()["scopes"]
 OUT:
 	for _, s := range context.Resource.scopes {
-		menu := scope{Scope: s}
+		if s.Visible != nil && !s.Visible(context) {
+			continue
+		}
 
-		for _, s := range scopes {
+		menu := &scope{Scope: s}
+
+		for _, s := range activatedScopeNames {
 			if s == menu.Name {
 				menu.Active = true
 			}
 		}
 
-		if !menu.Default {
-			if menu.Group != "" {
-				for _, m := range menus {
-					if m.Group == menu.Group {
-						m.Scopes = append(m.Scopes, menu)
-						continue OUT
-					}
+		if menu.Group != "" {
+			for _, m := range menus {
+				if m.Group == menu.Group {
+					m.Scopes = append(m.Scopes, menu)
+					continue OUT
 				}
-				menus = append(menus, &scopeMenu{Group: menu.Group, Scopes: []scope{menu}})
-			} else {
-				menus = append(menus, &scopeMenu{Group: menu.Group, Scopes: []scope{menu}})
+			}
+			menus = append(menus, &scopeMenu{Group: menu.Group, Scopes: []*scope{menu}})
+		} else if !menu.Default {
+			menus = append(menus, &scopeMenu{Group: menu.Group, Scopes: []*scope{menu}})
+		}
+	}
+
+	for _, menu := range menus {
+		hasActivedScope, hasDefaultScope := false, false
+		for _, scope := range menu.Scopes {
+			if scope.Active {
+				hasActivedScope = true
+			}
+			if scope.Default {
+				hasDefaultScope = true
+			}
+		}
+
+		if hasDefaultScope && !hasActivedScope {
+			for _, scope := range menu.Scopes {
+				if scope.Default {
+					scope.Active = true
+				}
 			}
 		}
 	}
 	return menus
 }
 
-// HasPermissioner has permission interface
-type HasPermissioner interface {
-	HasPermission(roles.PermissionMode, *qor.Context) bool
+// getFilters get filters from current context
+func (context *Context) getFilters() (filters []*Filter) {
+	if context.Resource == nil {
+		return
+	}
+
+	for _, f := range context.Resource.filters {
+		if f.Visible == nil || f.Visible(context) {
+			filters = append(filters, f)
+		}
+	}
+	return
 }
 
 func (context *Context) hasCreatePermission(permissioner HasPermissioner) bool {
@@ -420,65 +878,11 @@ func (context *Context) hasDeletePermission(permissioner HasPermissioner) bool {
 	return permissioner.HasPermission(roles.Delete, context.Context)
 }
 
-// Page contain pagination information
-type Page struct {
-	Page       int
-	Current    bool
-	IsPrevious bool
-	IsNext     bool
-}
-
-const visiblePageCount = 8
-
-// Pagination return pagination information
-// Keep visiblePageCount's pages visible, exclude prev and next link
-// Assume there are 12 pages in total.
-// When current page is 1
-// [current, 2, 3, 4, 5, 6, 7, 8, next]
-// When current page is 6
-// [prev, 2, 3, 4, 5, current, 7, 8, 9, 10, next]
-// When current page is 10
-// [prev, 5, 6, 7, 8, 9, current, 11, 12]
-// If total page count less than VISIBLE_PAGE_COUNT, always show all pages
-func (context *Context) Pagination() *[]Page {
-	pagination := context.Searcher.Pagination
-	if pagination.Pages <= 1 {
-		return nil
+func (context *Context) hasChangePermission(permissioner HasPermissioner) bool {
+	if context.Action == "new" {
+		return context.hasCreatePermission(permissioner)
 	}
-
-	start := pagination.CurrentPage - visiblePageCount/2
-	if start < 1 {
-		start = 1
-	}
-
-	end := start + visiblePageCount - 1 // -1 for "start page" itself
-	if end > pagination.Pages {
-		end = pagination.Pages
-	}
-
-	if (end-start) < visiblePageCount && start != 1 {
-		start = end - visiblePageCount + 1
-	}
-	if start < 1 {
-		start = 1
-	}
-
-	var pages []Page
-	// Append prev link
-	if start > 1 {
-		pages = append(pages, Page{Page: start - 1, IsPrevious: true})
-	}
-
-	for i := start; i <= end; i++ {
-		pages = append(pages, Page{Page: i, Current: pagination.CurrentPage == i})
-	}
-
-	// Append next link
-	if end < pagination.Pages {
-		pages = append(pages, Page{Page: end + 1, IsNext: true})
-	}
-
-	return &pages
+	return context.hasUpdatePermission(permissioner)
 }
 
 // PatchCurrentURL is a convinent wrapper for qor/utils.PatchURL
@@ -491,14 +895,35 @@ func (context *Context) patchURL(url string, params ...interface{}) (patchedURL 
 	return utils.PatchURL(url, params...)
 }
 
+// JoinCurrentURL is a convinent wrapper for qor/utils.JoinURL
+func (context *Context) joinCurrentURL(params ...interface{}) (joinedURL string, err error) {
+	return utils.JoinURL(context.Request.URL.String(), params...)
+}
+
+// JoinURL is a convinent wrapper for qor/utils.JoinURL
+func (context *Context) joinURL(url string, params ...interface{}) (joinedURL string, err error) {
+	return utils.JoinURL(url, params...)
+}
+
 func (context *Context) themesClass() (result string) {
-	var results []string
+	var results = map[string]bool{}
 	if context.Resource != nil {
 		for _, theme := range context.Resource.Config.Themes {
-			results = append(results, "qor-theme-"+theme)
+			if strings.HasPrefix(theme.GetName(), "-") {
+				results[strings.TrimPrefix(theme.GetName(), "-")] = false
+			} else if _, ok := results[theme.GetName()]; !ok {
+				results[theme.GetName()] = true
+			}
 		}
 	}
-	return strings.Join(results, " ")
+
+	var names []string
+	for name, enabled := range results {
+		if enabled {
+			names = append(names, "qor-theme-"+name)
+		}
+	}
+	return strings.Join(names, " ")
 }
 
 func (context *Context) javaScriptTag(names ...string) template.HTML {
@@ -519,22 +944,26 @@ func (context *Context) styleSheetTag(names ...string) template.HTML {
 	return template.HTML(strings.Join(results, ""))
 }
 
-func (context *Context) getThemes() (themes []string) {
+func (context *Context) getThemeNames() (themes []string) {
+	themesMap := map[string]bool{}
+
 	if context.Resource != nil {
-		themes = append(themes, context.Resource.Config.Themes...)
+		for _, theme := range context.Resource.Config.Themes {
+			if _, ok := themesMap[theme.GetName()]; !ok {
+				themes = append(themes, theme.GetName())
+			}
+		}
 	}
+
 	return
 }
 
 func (context *Context) loadThemeStyleSheets() template.HTML {
 	var results []string
-	for _, theme := range context.getThemes() {
-		var file = path.Join("assets", "stylesheets", theme+".css")
-		for _, view := range context.getViewPaths() {
-			if _, err := os.Stat(path.Join(view, file)); err == nil {
-				results = append(results, fmt.Sprintf(`<link type="text/css" rel="stylesheet" href="%s?theme=%s">`, path.Join(context.Admin.GetRouter().Prefix, file), theme))
-				break
-			}
+	for _, themeName := range context.getThemeNames() {
+		var file = path.Join("themes", themeName, "assets", "stylesheets", themeName+".css")
+		if _, err := context.Asset(file); err == nil {
+			results = append(results, fmt.Sprintf(`<link type="text/css" rel="stylesheet" href="%s?theme=%s">`, path.Join(context.Admin.GetRouter().Prefix, "assets", "stylesheets", themeName+".css"), themeName))
 		}
 	}
 
@@ -543,13 +972,10 @@ func (context *Context) loadThemeStyleSheets() template.HTML {
 
 func (context *Context) loadThemeJavaScripts() template.HTML {
 	var results []string
-	for _, theme := range context.getThemes() {
-		var file = path.Join("assets", "javascripts", theme+".js")
-		for _, view := range context.getViewPaths() {
-			if _, err := os.Stat(path.Join(view, file)); err == nil {
-				results = append(results, fmt.Sprintf(`<script src="%s?theme=%s"></script>`, path.Join(context.Admin.GetRouter().Prefix, file), theme))
-				break
-			}
+	for _, themeName := range context.getThemeNames() {
+		var file = path.Join("themes", themeName, "assets", "javascripts", themeName+".js")
+		if _, err := context.Asset(file); err == nil {
+			results = append(results, fmt.Sprintf(`<script src="%s?theme=%s"></script>`, path.Join(context.Admin.GetRouter().Prefix, "assets", "javascripts", themeName+".js"), themeName))
 		}
 	}
 
@@ -563,10 +989,8 @@ func (context *Context) loadAdminJavaScripts() template.HTML {
 	}
 
 	var file = path.Join("assets", "javascripts", strings.ToLower(strings.Replace(siteName, " ", "_", -1))+".js")
-	for _, view := range context.getViewPaths() {
-		if _, err := os.Stat(path.Join(view, file)); err == nil {
-			return template.HTML(fmt.Sprintf(`<script src="%s"></script>`, path.Join(context.Admin.GetRouter().Prefix, file)))
-		}
+	if _, err := context.Asset(file); err == nil {
+		return template.HTML(fmt.Sprintf(`<script src="%s"></script>`, path.Join(context.Admin.GetRouter().Prefix, file)))
 	}
 	return ""
 }
@@ -578,30 +1002,62 @@ func (context *Context) loadAdminStyleSheets() template.HTML {
 	}
 
 	var file = path.Join("assets", "stylesheets", strings.ToLower(strings.Replace(siteName, " ", "_", -1))+".css")
-	for _, view := range context.getViewPaths() {
-		if _, err := os.Stat(path.Join(view, file)); err == nil {
-			return template.HTML(fmt.Sprintf(`<link type="text/css" rel="stylesheet" href="%s">`, path.Join(context.Admin.GetRouter().Prefix, file)))
-		}
+	if _, err := context.Asset(file); err == nil {
+		return template.HTML(fmt.Sprintf(`<link type="text/css" rel="stylesheet" href="%s">`, path.Join(context.Admin.GetRouter().Prefix, file)))
 	}
 	return ""
 }
 
 func (context *Context) loadActions(action string) template.HTML {
-	var actions = map[string]string{}
-	var actionKeys = []string{}
-	var viewPaths = context.getViewPaths()
+	var (
+		actionPatterns, actionKeys, actionFiles []string
+		actions                                 = map[string]string{}
+	)
 
-	for j := len(viewPaths); j > 0; j-- {
-		view := viewPaths[j-1]
-		globalfiles, _ := filepath.Glob(path.Join(view, "actions/*.tmpl"))
-		files, _ := filepath.Glob(path.Join(view, "actions", action, "*.tmpl"))
+	switch action {
+	case "index", "show", "edit", "new":
+		actionPatterns = []string{filepath.Join("actions", action, "*.tmpl"), "actions/*.tmpl"}
 
-		for _, file := range append(globalfiles, files...) {
-			base := regexp.MustCompile("^\\d+\\.").ReplaceAllString(path.Base(file), "")
-			if _, ok := actions[base]; !ok {
-				actionKeys = append(actionKeys, path.Base(file))
+		if !context.Resource.sections.ConfiguredShowAttrs && action == "edit" {
+			actionPatterns = []string{filepath.Join("actions", "show", "*.tmpl"), "actions/*.tmpl"}
+		}
+	case "global":
+		actionPatterns = []string{"actions/*.tmpl"}
+	default:
+		actionPatterns = []string{filepath.Join("actions", action, "*.tmpl")}
+	}
+
+	for _, pattern := range actionPatterns {
+		for _, themeName := range context.getThemeNames() {
+			if resourcePath := context.resourcePath(); resourcePath != "" {
+				if matches, err := context.Admin.AssetFS.Glob(filepath.Join("themes", themeName, resourcePath, pattern)); err == nil {
+					actionFiles = append(actionFiles, matches...)
+				}
 			}
-			actions[base] = file
+
+			if matches, err := context.Admin.AssetFS.Glob(filepath.Join("themes", themeName, pattern)); err == nil {
+				actionFiles = append(actionFiles, matches...)
+			}
+		}
+
+		if resourcePath := context.resourcePath(); resourcePath != "" {
+			if matches, err := context.Admin.AssetFS.Glob(filepath.Join(resourcePath, pattern)); err == nil {
+				actionFiles = append(actionFiles, matches...)
+			}
+		}
+
+		if matches, err := context.Admin.AssetFS.Glob(pattern); err == nil {
+			actionFiles = append(actionFiles, matches...)
+		}
+	}
+
+	// before files have higher priority
+	for _, actionFile := range actionFiles {
+		base := regexp.MustCompile("^\\d+\\.").ReplaceAllString(path.Base(actionFile), "")
+
+		if _, ok := actions[base]; !ok {
+			actionKeys = append(actionKeys, path.Base(actionFile))
+			actions[base] = actionFile
 		}
 	}
 
@@ -618,11 +1074,15 @@ func (context *Context) loadActions(action string) template.HTML {
 		}()
 
 		base := regexp.MustCompile("^\\d+\\.").ReplaceAllString(key, "")
-		file := actions[base]
-		if tmpl, err := template.New(filepath.Base(file)).Funcs(context.FuncMap()).ParseFiles(file); err == nil {
-			if err := tmpl.Execute(result, context); err != nil {
-				utils.ExitWithMsg(err)
+		if content, err := context.Asset(actions[base]); err == nil {
+			if tmpl, err := template.New(filepath.Base(actions[base])).Funcs(context.FuncMap()).Parse(string(content)); err == nil {
+				if err := tmpl.Execute(result, context); err != nil {
+					result.WriteString(err.Error())
+					utils.ExitWithMsg(err)
+				}
+			} else {
 				result.WriteString(err.Error())
+				utils.ExitWithMsg(err)
 			}
 		}
 	}
@@ -631,8 +1091,8 @@ func (context *Context) loadActions(action string) template.HTML {
 }
 
 func (context *Context) logoutURL() string {
-	if context.Admin.auth != nil {
-		return context.Admin.auth.LogoutURL(context)
+	if context.Admin.Auth != nil {
+		return context.Admin.Auth.LogoutURL(context)
 	}
 	return ""
 }
@@ -698,9 +1158,23 @@ func (context *Context) AllowedActions(actions []*Action, mode string, records .
 	var allowedActions []*Action
 	for _, action := range actions {
 		for _, m := range action.Modes {
-			if m == mode && action.HasPermission(roles.Update, context, records...) {
-				allowedActions = append(allowedActions, action)
-				break
+			if m == mode || (m == "index" && mode == "batch") {
+				var permission = roles.Update
+				switch strings.ToUpper(action.Method) {
+				case "POST":
+					permission = roles.Create
+				case "DELETE":
+					permission = roles.Delete
+				case "PUT":
+					permission = roles.Update
+				case "GET":
+					permission = roles.Read
+				}
+
+				if action.isAllowed(permission, context, records...) {
+					allowedActions = append(allowedActions, action)
+					break
+				}
 			}
 		}
 	}
@@ -717,7 +1191,9 @@ func (context *Context) pageTitle() template.HTML {
 	}
 
 	if context.Action == "action" {
-		return context.t(fmt.Sprintf("%v.actions.%v", context.Resource.ToParam(), context.Result.(*Action).Label), context.Result.(*Action).Label)
+		if action, ok := context.Result.(*Action); ok {
+			return context.t(fmt.Sprintf("%v.actions.%v", context.Resource.ToParam(), action.Label), action.Label)
+		}
 	}
 
 	var (
@@ -748,101 +1224,4 @@ func (context *Context) pageTitle() template.HTML {
 	}
 
 	return context.t(titleKey, defaultValue, resourceName)
-}
-
-// FuncMap return funcs map
-func (context *Context) FuncMap() template.FuncMap {
-	htmlSanitizer := bluemonday.UGCPolicy()
-	funcMap := template.FuncMap{
-		"current_user":         func() qor.CurrentUser { return context.CurrentUser },
-		"get_resource":         context.Admin.GetResource,
-		"new_resource_context": context.NewResourceContext,
-		"is_new_record":        context.isNewRecord,
-		"is_included":          context.isIncluded,
-		"primary_key_of":       context.primaryKeyOf,
-		"formatted_value_of":   context.FormattedValueOf,
-		"raw_value_of":         context.RawValueOf,
-
-		"t":          context.t,
-		"flashes":    context.GetFlashes,
-		"pagination": context.Pagination,
-		"escape":     html.EscapeString,
-		"raw":        func(str string) template.HTML { return template.HTML(htmlSanitizer.Sanitize(str)) },
-		"equal":      equal,
-		"stringify":  utils.Stringify,
-		"plural":     inflection.Plural,
-		"singular":   inflection.Singular,
-		"marshal": func(v interface{}) template.JS {
-			byt, _ := json.Marshal(v)
-			return template.JS(byt)
-		},
-
-		"render":      context.Render,
-		"render_form": context.renderForm,
-		"render_meta": func(value interface{}, meta *Meta, types ...string) template.HTML {
-			var (
-				result = bytes.NewBufferString("")
-				typ    = "index"
-			)
-
-			for _, t := range types {
-				typ = t
-			}
-
-			context.renderMeta(meta, value, []string{}, typ, result)
-			return template.HTML(result.String())
-		},
-		"page_title": context.pageTitle,
-		"meta_label": func(meta *Meta) template.HTML {
-			key := fmt.Sprintf("%v.attributes.%v", meta.baseResource.ToParam(), meta.Label)
-			return context.Admin.T(context.Context, key, meta.Label)
-		},
-
-		"url_for":            context.URLFor,
-		"link_to":            context.linkTo,
-		"patch_current_url":  context.patchCurrentURL,
-		"patch_url":          context.patchURL,
-		"logout_url":         context.logoutURL,
-		"search_center_path": func() string { return path.Join(context.Admin.router.Prefix, "!search") },
-		"new_resource_path":  context.newResourcePath,
-		"defined_resource_show_page": func(res *Resource) bool {
-			if res != nil {
-				if r := context.Admin.GetResource(res.Name); r != nil {
-					return r.isSetShowAttrs
-				}
-			}
-
-			return false
-		},
-
-		"get_menus":                 context.getMenus,
-		"get_scopes":                context.GetScopes,
-		"get_formatted_errors":      context.getFormattedErrors,
-		"load_actions":              context.loadActions,
-		"allowed_actions":           context.AllowedActions,
-		"is_sortable_meta":          context.isSortableMeta,
-		"index_sections":            context.indexSections,
-		"show_sections":             context.showSections,
-		"new_sections":              context.newSections,
-		"edit_sections":             context.editSections,
-		"convert_sections_to_metas": context.convertSectionToMetas,
-
-		"has_create_permission": context.hasCreatePermission,
-		"has_read_permission":   context.hasReadPermission,
-		"has_update_permission": context.hasUpdatePermission,
-		"has_delete_permission": context.hasDeletePermission,
-
-		"qor_theme_class":        context.themesClass,
-		"javascript_tag":         context.javaScriptTag,
-		"stylesheet_tag":         context.styleSheetTag,
-		"load_theme_stylesheets": context.loadThemeStyleSheets,
-		"load_theme_javascripts": context.loadThemeJavaScripts,
-		"load_admin_stylesheets": context.loadAdminStyleSheets,
-		"load_admin_javascripts": context.loadAdminJavaScripts,
-	}
-
-	for key, value := range context.Admin.funcMaps {
-		funcMap[key] = value
-	}
-	return funcMap
 }

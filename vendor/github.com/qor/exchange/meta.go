@@ -31,12 +31,12 @@ func (meta *Meta) GetResource() resource.Resourcer {
 
 func (meta *Meta) updateMeta() {
 	meta.Meta = resource.Meta{
-		Name:       meta.Name,
-		FieldName:  meta.FieldName,
-		Setter:     meta.Setter,
-		Valuer:     meta.Valuer,
-		Permission: meta.Permission,
-		Resource:   meta.base,
+		Name:         meta.Name,
+		FieldName:    meta.FieldName,
+		Setter:       meta.Setter,
+		Valuer:       meta.Valuer,
+		Permission:   meta.Permission,
+		BaseResource: meta.base,
 	}
 
 	meta.PreInitialize()
@@ -61,7 +61,7 @@ func (meta *Meta) updateMeta() {
 			if reflectValue := reflect.ValueOf(result); reflectValue.IsValid() {
 				if reflectValue.Kind() == reflect.Ptr {
 					if reflectValue.IsNil() || !reflectValue.Elem().IsValid() {
-						return nil
+						return ""
 					}
 
 					result = reflectValue.Elem().Interface()
@@ -70,6 +70,6 @@ func (meta *Meta) updateMeta() {
 				return result
 			}
 		}
-		return nil
+		return ""
 	})
 }

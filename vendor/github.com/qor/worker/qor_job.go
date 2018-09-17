@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/audited"
 	"github.com/qor/serializable_meta"
@@ -77,7 +76,13 @@ type QorJob struct {
 	ResultsTable ResultsTable `sql:"size:65532"`
 
 	mutex sync.Mutex `sql:"-"`
-	Job   *Job       `sql:"-"`
+
+	// Add `valid:"-"`` to make the QorJob work well with qor/validations
+	// When the qor/validations auto exec the validate struct callback we get error
+	// runtime: goroutine stack exceeds 1000000000-byte limit
+	// fatal error: stack overflow
+	Job *Job `sql:"-" valid:"-"`
+
 	audited.AuditedModel
 	serializable_meta.SerializableMeta
 }

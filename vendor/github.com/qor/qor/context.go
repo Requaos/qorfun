@@ -15,11 +15,11 @@ type CurrentUser interface {
 type Context struct {
 	Request     *http.Request
 	Writer      http.ResponseWriter
-	ResourceID  string
-	Config      *Config
-	Roles       []string
-	DB          *gorm.DB
 	CurrentUser CurrentUser
+	Roles       []string
+	ResourceID  string
+	DB          *gorm.DB
+	Config      *Config
 	Errors
 }
 

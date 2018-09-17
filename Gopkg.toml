@@ -63,11 +63,11 @@
 
 [[constraint]]
   name = "github.com/qor/activity"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/admin"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   branch = "master"
@@ -91,7 +91,7 @@
 
 [[constraint]]
   name = "github.com/qor/exchange"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   branch = "master"
@@ -103,15 +103,15 @@
 
 [[constraint]]
   name = "github.com/qor/i18n"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/l10n"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/location"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   branch = "master"
@@ -143,7 +143,7 @@
 
 [[constraint]]
   name = "github.com/qor/qor"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   branch = "master"
@@ -151,19 +151,19 @@
 
 [[constraint]]
   name = "github.com/qor/render"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/responder"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/roles"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/seo"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   branch = "master"
@@ -171,19 +171,19 @@
 
 [[constraint]]
   name = "github.com/qor/slug"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/sorting"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/transition"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/qor/validations"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   branch = "master"
@@ -195,7 +195,7 @@
 
 [[constraint]]
   name = "github.com/qor/worker"
-  version = "1.0.0"
+  branch = "master"
 
 [[constraint]]
   branch = "master"

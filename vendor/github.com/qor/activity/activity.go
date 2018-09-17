@@ -2,15 +2,12 @@ package activity
 
 import (
 	"fmt"
-	"html/template"
 	"strings"
-	"time"
 
 	"github.com/jinzhu/gorm"
-
 	"github.com/qor/admin"
 	"github.com/qor/audited"
-	"github.com/qor/media_library"
+	"github.com/qor/media/asset_manager"
 	"github.com/qor/qor"
 	"github.com/qor/qor/resource"
 	"github.com/qor/qor/utils"
@@ -39,7 +36,7 @@ func Register(res *admin.Resource) {
 
 	if activityResource == nil {
 		// Auto run migration before add resource
-		res.GetAdmin().Config.DB.AutoMigrate(&QorActivity{})
+		res.GetAdmin().DB.AutoMigrate(&QorActivity{})
 
 		activityResource = qorAdmin.AddResource(&QorActivity{}, &admin.Config{Invisible: true})
 		activityResource.Meta(&admin.Meta{Name: "Action", Type: "hidden", Valuer: func(value interface{}, ctx *qor.Context) interface{} {
@@ -50,7 +47,7 @@ func Register(res *admin.Resource) {
 			return activityResource.GetAdmin().T(ctx, "activity."+act.Action, act.Action)
 		}})
 		activityResource.Meta(&admin.Meta{Name: "UpdatedAt", Type: "hidden", Valuer: func(value interface{}, ctx *qor.Context) interface{} {
-			return value.(*QorActivity).UpdatedAt.Format("Jan 2 15:04")
+			return utils.FormatTime(value.(*QorActivity).UpdatedAt, "Jan 2 15:04", ctx)
 		}})
 		activityResource.Meta(&admin.Meta{Name: "URL", Valuer: func(value interface{}, ctx *qor.Context) interface{} {
 			return fmt.Sprintf("/admin/%v/%v/!%v/%v/edit", res.ToParam(), res.GetPrimaryValue(ctx.Request), activityResource.ToParam(), value.(*QorActivity).ID)
@@ -58,46 +55,40 @@ func Register(res *admin.Resource) {
 
 		assetManager := qorAdmin.GetResource("AssetManager")
 		if assetManager == nil {
-			assetManager = qorAdmin.AddResource(&media_library.AssetManager{}, &admin.Config{Invisible: true})
+			assetManager = qorAdmin.AddResource(&asset_manager.AssetManager{}, &admin.Config{Invisible: true})
 		}
 
 		activityResource.Meta(&admin.Meta{Name: "Content", Type: "rich_editor", Resource: assetManager})
 		activityResource.Meta(&admin.Meta{Name: "Note", Type: "string", Resource: assetManager})
 		activityResource.EditAttrs("Action", "Content", "Note")
 		activityResource.ShowAttrs("ID", "Action", "Content", "Note", "URL", "UpdatedAt", "CreatorName")
-		activityResource.AddValidator(func(record interface{}, metaValues *resource.MetaValues, context *qor.Context) error {
-			if meta := metaValues.Get("Content"); meta != nil {
-				if name := utils.ToString(meta.Value); strings.TrimSpace(name) == "" {
-					return validations.NewError(record, "Content", "Content can't be blank")
+		activityResource.AddValidator(&resource.Validator{
+			Name: "activity-content-validator",
+			Handler: func(record interface{}, metaValues *resource.MetaValues, context *qor.Context) error {
+				if meta := metaValues.Get("Content"); meta != nil {
+					if name := utils.ToString(meta.Value); strings.TrimSpace(name) == "" {
+						return validations.NewError(record, "Content", "Content can't be blank")
+					}
 				}
-			}
-			return nil
+				return nil
+			},
 		})
 	}
 
-	admin.RegisterViewPath("github.com/qor/activity/views")
+	res.GetAdmin().RegisterViewPath("github.com/qor/activity/views")
 	res.UseTheme("activity")
-
-	qorAdmin.RegisterFuncMap("get_activities", func(context *admin.Context, types ...string) []QorActivity {
-		activities, _ := GetActivities(context, types...)
-		return activities
-	})
-
-	qorAdmin.RegisterFuncMap("formatted_datetime", func(datetime time.Time) string {
-		return datetime.Format("Jan 2 15:04")
-	})
-
-	qorAdmin.RegisterFuncMap("formatted_content", func(content string) template.HTML {
-		return template.HTML(content)
-	})
 
 	qorAdmin.RegisterFuncMap("activity_resource", func() *admin.Resource {
 		return qorAdmin.GetResource("QorActivity")
 	})
 
+	qorAdmin.RegisterFuncMap("get_activities_count", func(context *admin.Context) int {
+		return GetActivitiesCount(context, context.Result)
+	})
+
 	router := res.GetAdmin().GetRouter()
 	ctrl := controller{ActivityResource: activityResource}
-	router.Get(fmt.Sprintf("/%v/%v/!qor_activities", res.ToParam(), res.ParamIDName()), ctrl.GetActivityHandler)
-	router.Post(fmt.Sprintf("/%v/%v/!qor_activities", res.ToParam(), res.ParamIDName()), ctrl.CreateActivityHandler)
-	router.Post(fmt.Sprintf("/%v/%v/!qor_activities/%v/edit", res.ToParam(), res.ParamIDName(), activityResource.ParamIDName()), ctrl.UpdateActivityHandler)
+	router.Get(fmt.Sprintf("/%v/%v/!qor_activities", res.ToParam(), res.ParamIDName()), ctrl.GetActivity)
+	router.Post(fmt.Sprintf("/%v/%v/!qor_activities", res.ToParam(), res.ParamIDName()), ctrl.CreateActivity)
+	router.Post(fmt.Sprintf("/%v/%v/!qor_activities/%v/edit", res.ToParam(), res.ParamIDName(), activityResource.ParamIDName()), ctrl.UpdateActivity)
 }
