@@ -3,11 +3,19 @@ package publish
 import (
 	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 
 	"github.com/qor/admin"
+	"github.com/qor/qor"
 	"github.com/qor/qor/resource"
+	"github.com/qor/qor/utils"
+	"github.com/qor/roles"
+	"github.com/qor/worker"
+)
+
+const (
+	// PublishPermission publish permission
+	PublishPermission roles.PermissionMode = "publish"
 )
 
 type publishController struct {
@@ -15,10 +23,10 @@ type publishController struct {
 }
 
 type visiblePublishResourceInterface interface {
-	VisiblePublishResource() bool
+	VisiblePublishResource(*qor.Context) bool
 }
 
-func (db *publishController) Preview(context *admin.Context) {
+func (pc *publishController) Preview(context *admin.Context) {
 	type resource struct {
 		*admin.Resource
 		Value interface{}
@@ -29,87 +37,97 @@ func (db *publishController) Preview(context *admin.Context) {
 	draftDB := context.GetDB().Set(publishDraftMode, true).Unscoped()
 	for _, res := range context.Admin.GetResources() {
 		if visibleInterface, ok := res.Value.(visiblePublishResourceInterface); ok {
-			if !visibleInterface.VisiblePublishResource() {
+			if !visibleInterface.VisiblePublishResource(context.Context) {
 				continue
 			}
 		} else if res.Config.Invisible {
 			continue
 		}
 
-		results := res.NewSlice()
-		if IsPublishableModel(res.Value) || IsPublishEvent(res.Value) {
-			if draftDB.Unscoped().Where("publish_status = ?", DIRTY).Find(results).RowsAffected > 0 {
-				drafts = append(drafts, resource{
-					Resource: res,
-					Value:    results,
-				})
+		if res.HasPermission(PublishPermission, context.Context) {
+			results := res.NewSlice()
+			if IsPublishableModel(res.Value) || IsPublishEvent(res.Value) {
+				if pc.SearchHandler(draftDB.Where("publish_status = ?", DIRTY), context.Context).Find(results).RowsAffected > 0 {
+					drafts = append(drafts, resource{
+						Resource: res,
+						Value:    results,
+					})
+				}
 			}
 		}
 	}
 	context.Execute("publish_drafts", drafts)
 }
 
-func (db *publishController) Diff(context *admin.Context) {
-	resourceID := context.Request.URL.Query().Get(":publish_unique_key")
-	params := strings.Split(resourceID, "__")
-	name, id := params[0], params[1]
-	res := context.Admin.GetResource(name)
+func (pc *publishController) Diff(context *admin.Context) {
+	var (
+		resourceID = context.Request.URL.Query().Get(":publish_unique_key")
+		params     = strings.Split(resourceID, "__") // name__primary_keys
+		res        = context.Admin.GetResource(params[0])
+	)
 
 	draft := res.NewStruct()
-	context.GetDB().Set(publishDraftMode, true).Unscoped().First(draft, id)
+	pc.search(context.GetDB().Set(publishDraftMode, true), res, [][]string{params[1:]}).First(draft)
 
 	production := res.NewStruct()
-	context.GetDB().Set(publishDraftMode, false).Unscoped().First(production, id)
+	pc.search(context.GetDB().Set(publishDraftMode, false), res, [][]string{params[1:]}).First(production)
 
 	results := map[string]interface{}{"Production": production, "Draft": draft, "Resource": res}
-
 	fmt.Fprintf(context.Writer, string(context.Render("publish_diff", results)))
 }
 
-func (db *publishController) PublishOrDiscard(context *admin.Context) {
+func (pc *publishController) PublishOrDiscard(context *admin.Context) {
 	var request = context.Request
 	var ids = request.Form["checked_ids[]"]
-	var records = []interface{}{}
-	var values = map[string][]string{}
 
-	for _, id := range ids {
-		if keys := strings.Split(id, "__"); len(keys) == 2 {
-			name, id := keys[0], keys[1]
-			values[name] = append(values[name], id)
+	if scheduler := pc.Publish.WorkerScheduler; scheduler != nil {
+		jobResource := scheduler.JobResource
+		result := jobResource.NewStruct().(worker.QorJobInterface)
+		if request.Form.Get("publish_type") == "discard" {
+			result.SetJob(scheduler.GetRegisteredJob("Discard"))
+		} else {
+			result.SetJob(scheduler.GetRegisteredJob("Publish"))
 		}
-	}
 
-	draftDB := context.GetDB().Set(publishDraftMode, true).Unscoped()
-	for name, value := range values {
-		res := context.Admin.GetResource(name)
-		results := res.NewSlice()
-		if draftDB.Find(results, fmt.Sprintf("%v IN (?)", res.PrimaryDBName()), value).Error == nil {
-			resultValues := reflect.Indirect(reflect.ValueOf(results))
-			for i := 0; i < resultValues.Len(); i++ {
-				records = append(records, resultValues.Index(i).Interface())
-			}
+		workerArgument := &QorWorkerArgument{IDs: ids}
+		if t, err := utils.ParseTime(request.Form.Get("scheduled_time"), context.Context); err == nil {
+			workerArgument.ScheduleTime = &t
 		}
-	}
+		result.SetSerializableArgumentValue(workerArgument)
 
-	if request.Form.Get("publish_type") == "publish" {
-		Publish{DB: draftDB}.Publish(records...)
-	} else if request.Form.Get("publish_type") == "discard" {
-		Publish{DB: draftDB}.Discard(records...)
+		jobResource.CallSave(result, context.Context)
+		scheduler.AddJob(result)
+
+		http.Redirect(context.Writer, context.Request, context.URLFor(jobResource), http.StatusFound)
+	} else {
+		records := pc.searchWithPublishIDs(context.GetDB().Set(publishDraftMode, true), context.Admin, ids)
+
+		if request.Form.Get("publish_type") == "publish" {
+			pc.Publish.Publish(records...)
+		} else if request.Form.Get("publish_type") == "discard" {
+			pc.Publish.Discard(records...)
+		}
+
+		http.Redirect(context.Writer, context.Request, context.Request.RequestURI, http.StatusFound)
 	}
-	http.Redirect(context.Writer, context.Request, context.Request.RequestURI, http.StatusFound)
 }
 
-// ConfigureQorResource configure qor resource for qor admin
-func (publish *Publish) ConfigureQorResource(res resource.Resourcer) {
+// ConfigureQorResourceBeforeInitialize configure qor resource when initialize qor admin
+func (publish *Publish) ConfigureQorResourceBeforeInitialize(res resource.Resourcer) {
 	if res, ok := res.(*admin.Resource); ok {
-		admin.RegisterViewPath("github.com/qor/publish/views")
+		res.GetAdmin().RegisterViewPath("github.com/qor/publish/views")
 		res.UseTheme("publish")
 
 		if event := res.GetAdmin().GetResource("PublishEvent"); event == nil {
 			eventResource := res.GetAdmin().AddResource(&PublishEvent{}, &admin.Config{Invisible: true})
 			eventResource.IndexAttrs("Name", "Description", "CreatedAt")
 		}
+	}
+}
 
+// ConfigureQorResource configure qor resource for qor admin
+func (publish *Publish) ConfigureQorResource(res resource.Resourcer) {
+	if res, ok := res.(*admin.Resource); ok {
 		controller := publishController{publish}
 		router := res.GetAdmin().GetRouter()
 		router.Get(fmt.Sprintf("/%v/diff/:publish_unique_key", res.ToParam()), controller.Diff)
@@ -117,7 +135,12 @@ func (publish *Publish) ConfigureQorResource(res resource.Resourcer) {
 		router.Post(res.ToParam(), controller.PublishOrDiscard)
 
 		res.GetAdmin().RegisterFuncMap("publish_unique_key", func(res *admin.Resource, record interface{}, context *admin.Context) string {
-			return fmt.Sprintf("%s__%v", res.ToParam(), context.GetDB().NewScope(record).PrimaryKeyValue())
+			var publishKeys = []string{res.ToParam()}
+			var scope = publish.DB.NewScope(record)
+			for _, primaryField := range scope.PrimaryFields() {
+				publishKeys = append(publishKeys, fmt.Sprint(primaryField.Field.Interface()))
+			}
+			return strings.Join(publishKeys, "__")
 		})
 
 		res.GetAdmin().RegisterFuncMap("is_publish_event_resource", func(res *admin.Resource) bool {

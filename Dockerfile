@@ -23,9 +23,6 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # copy secure user
 COPY --from=builder /etc/passwd /etc/passwd
 
-# copy in dependencies
-COPY --from=builder /go/src/github.com/qor /go/src/github.com/qor
-
 # copy binary
 COPY --from=builder /go/src/github.com/requaos/qorfun/bin/linux_amd64/qorfun /qorfun
 

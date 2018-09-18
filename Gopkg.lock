@@ -6,8 +6,8 @@
   name = "cloud.google.com/go"
   packages = ["compute/metadata"]
   pruneopts = "UT"
-  revision = "c728a003b238b26cef9ab6753a5dc424b331c3ad"
-  version = "v0.27.0"
+  revision = "97efc2c9ffd9fe8ef47f7f3203dc60bbca547374"
+  version = "v0.28.0"
 
 [[projects]]
   digest = "1:b16fbfbcc20645cb419f78325bb2e85ec729b338e996a228124d68931a6f2a37"
@@ -34,7 +34,7 @@
   version = "v9"
 
 [[projects]]
-  digest = "1:4bd4630b4a99978dbdfb04976ec350dfa5c903bc5c3bc91a4d4b321f8babce25"
+  digest = "1:8fbc2e1f7d74b6a75816f6c9d397c5b5ad150f2f1123d1708c3a21c07c34ff7e"
   name = "github.com/aws/aws-sdk-go"
   packages = [
     "aws",
@@ -70,8 +70,8 @@
     "service/sts",
   ]
   pruneopts = "UT"
-  revision = "87474c2d2bbdf6bd31275e435648aeb6c3d6815d"
-  version = "v1.15.35"
+  revision = "34699de98eac41fa94737f6ce7b83d7a621c2634"
+  version = "v1.15.36"
 
 [[projects]]
   branch = "master"
@@ -238,14 +238,6 @@
   packages = ["."]
   pruneopts = "UT"
   revision = "0b12d6b5"
-
-[[projects]]
-  digest = "1:0015060922f1b2e04469224e2ed82f0a67abbfee9a0a91852cf4980b91bf11d6"
-  name = "github.com/jteeuwen/go-bindata"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "bbd0c6e271208dce66d8fda4bc536453cd27fc4a"
-  version = "v3.0.7"
 
 [[projects]]
   digest = "1:ca955a9cd5b50b0f43d2cc3aeb35c951473eeca41b34eb67507f1dbcc0542394"
@@ -507,12 +499,12 @@
   revision = "5661dd87199044c4fbae1ccdaa6814a373ac2879"
 
 [[projects]]
-  digest = "1:d717a26b925be2be33670c2e5ed54d519adc43cc799cf5b3b097a1a59db32e47"
+  branch = "master"
+  digest = "1:b03a5e7b8e07f5f2c1f15d09efeabf9f039317e97e9e5775d3f4e569491270e0"
   name = "github.com/qor/publish"
   packages = ["."]
   pruneopts = "UT"
-  revision = "e32525becf49626c73fdca1a4aa3c39ffde86a2d"
-  version = "v1.0"
+  revision = "8e9ba72ef6e855b43e02361660bccded2d77a04d"
 
 [[projects]]
   branch = "master"
@@ -575,12 +567,12 @@
   revision = "41673c7570c77b0099016081e09a6eaa03557c6e"
 
 [[projects]]
-  digest = "1:966dd5713e00a89714966f50adde736a32013e4f69634166989e44be741d6a77"
+  branch = "master"
+  digest = "1:a57c23542a93bf4b5f303b25d5bb0adaf3678ad419dbdbe32d2b23d98453cc2c"
   name = "github.com/qor/serializable_meta"
   packages = ["."]
   pruneopts = "UT"
-  revision = "eea3296fff71c33e725e92a40e0badb65c3876eb"
-  version = "v1.0"
+  revision = "5fd8542db4170c6ce0f8d669b521803b87eb0a99"
 
 [[projects]]
   branch = "master"
@@ -657,6 +649,13 @@
   packages = ["."]
   pruneopts = "UT"
   revision = "cb7f23ec59bec0d61b19c56cd88cee3d0cc1870c"
+
+[[projects]]
+  digest = "1:a3fff2de985cf671da1c709c2fde3a9d36b266a73cb353be27708a90431132a7"
+  name = "github.com/shuLhan/go-bindata"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "9308d8f97a856c0fc8b0e39dcc6a5bc05ff823bd"
 
 [[projects]]
   branch = "master"
@@ -777,7 +776,6 @@
     "github.com/jinzhu/gorm/dialects/mysql",
     "github.com/jinzhu/gorm/dialects/postgres",
     "github.com/jinzhu/now",
-    "github.com/jteeuwen/go-bindata",
     "github.com/microcosm-cc/bluemonday",
     "github.com/qor/action_bar",
     "github.com/qor/activity",
@@ -834,6 +832,7 @@
     "github.com/qor/widget",
     "github.com/qor/wildcard_router",
     "github.com/qor/worker",
+    "github.com/shuLhan/go-bindata",
     "github.com/unrolled/render",
     "golang.org/x/crypto/bcrypt",
   ]

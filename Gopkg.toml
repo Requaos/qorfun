@@ -50,10 +50,6 @@
   name = "github.com/jinzhu/now"
 
 [[constraint]]
-  name = "github.com/jteeuwen/go-bindata"
-  version = "3.0.7"
-
-[[constraint]]
   name = "github.com/microcosm-cc/bluemonday"
   version = "1.0.1"
 
@@ -140,6 +136,18 @@
 [[constraint]]
   branch = "master"
   name = "github.com/qor/publish2"
+
+[[constraint]]
+  name = "github.com/shuLhan/go-bindata"
+  revision = "9308d8f97a856c0fc8b0e39dcc6a5bc05ff823bd"
+
+[[override]]
+  branch = "master"
+  name = "github.com/qor/publish"
+
+[[override]]
+  branch = "master"
+  name = "github.com/qor/serializable_meta"
 
 [[constraint]]
   name = "github.com/qor/qor"
