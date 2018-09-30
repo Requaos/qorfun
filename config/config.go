@@ -3,6 +3,10 @@ package config
 import (
 	"os"
 
+	"github.com/requaos/qorfun/config/bindatafs"
+
+	"github.com/qor/assetfs"
+
 	"github.com/jinzhu/configor"
 	"github.com/unrolled/render"
 
@@ -80,6 +84,8 @@ func init() {
 		panic(err)
 	}
 
+	assetfs.SetAssetFS(bindatafs.AssetFS)
+
 	location.GoogleAPIKey = Config.GoogleAPIKey
 	location.BaiduAPIKey = Config.BaiduAPIKey
 
@@ -107,6 +113,7 @@ func init() {
 	// 	Sender: gomailer.New(&gomailer.Config{Sender: sender}),
 	// })
 	Mailer = mailer.New(&mailer.Config{
-		Sender: logger.New(&logger.Config{}),
+		AssetFS: assetfs.AssetFS(),
+		Sender:  logger.New(&logger.Config{}),
 	})
 }

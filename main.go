@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/qor/assetfs"
+
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 
@@ -42,14 +44,16 @@ func main() {
 	var (
 		Router = chi.NewRouter()
 		Admin  = admin.New(&admin.AdminConfig{
+			AssetFS:  assetfs.AssetFS(),
 			SiteName: "QOR DEMO",
 			Auth:     auth.AdminAuth{},
 			DB:       db.DB.Set(publish2.VisibleMode, publish2.ModeOff).Set(publish2.ScheduleMode, publish2.ModeOff),
 		})
 		Application = application.New(&application.Config{
-			Router: Router,
-			Admin:  Admin,
-			DB:     db.DB,
+			Router:  Router,
+			Admin:   Admin,
+			DB:      db.DB,
+			AssetFS: assetfs.AssetFS(),
 		})
 	)
 

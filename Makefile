@@ -45,7 +45,7 @@ endif
 # EXTLDFLAGS = -extldflags "-lm -lstdc++ -static"
 EXTLDFLAGS =
 
-GO_LINKER_FLAGS ?= --ldflags \
+GO_LINKER_FLAGS ?= -tags "bindatafs netgo" -ldflags \
 	'$(EXTLDFLAGS) -s -w -X "github.com/requaos/qorfun/internal/version.BuildNumber=$(BUILD_NUMBER)" \
 	-X "github.com/requaos/qorfun/internal/version.Timestamp=$(BUILD_TIMESTAMP)" \
 	-X "github.com/requaos/qorfun/internal/version.BuildHash=$(BUILD_HASH)"'
@@ -60,7 +60,7 @@ generate:
 
 binary:
 	@echo "$(OK_COLOR)*** Running go build... ***$(NO_COLOR)"
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -a -tags netgo $(GOFLAGS) $(GO_LINKER_FLAGS) -o bin/$(GOOS)_$(GOARCH)/$(BINARY_NAME)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -a $(GOFLAGS) $(GO_LINKER_FLAGS) -o bin/$(GOOS)_$(GOARCH)/$(BINARY_NAME)
 
 test: generate
 	@echo "$(OK_COLOR)*** Running go test... ***$(NO_COLOR)"

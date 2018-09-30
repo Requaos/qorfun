@@ -26,6 +26,15 @@ COPY --from=builder /etc/passwd /etc/passwd
 # copy binary
 COPY --from=builder /go/src/github.com/requaos/qorfun/bin/linux_amd64/qorfun /qorfun
 
+# copy application config
+COPY --from=builder /go/src/github.com/requaos/qorfun/config/application.yml /config/application.yml
+
+# copy database config
+COPY --from=builder /go/src/github.com/requaos/qorfun/config/database.yml /config/database.yml
+
+# copy smtp config
+COPY --from=builder /go/src/github.com/requaos/qorfun/config/smtp.yml /config/smtp.yml
+
 # set the executing user
 USER fun
 
